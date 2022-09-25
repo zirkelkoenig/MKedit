@@ -7,6 +7,12 @@ Configuration will be somewhat inspired by Emacs, consisting of variables and fu
 
 I'm personally not a fan of the fact that many editor devs feel the need to invent their own scripting languages for extensibility. For this editor, I'm planning to use a plug-in system directly at the C-level.
 
-# Progress
+# Current Progress
 ## Font File Parser
 In the beginning, only TTF fonts using Unicode BMP encoding will be supported. I'm currently using Microsoft's Consolas font for testing.
+
+The mapping of codepoints to glyph IDs is now up and running.
+
+# Next Steps
+- Parsing the actual font glyphs
+- Glyph rasterization

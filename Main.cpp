@@ -18,8 +18,7 @@ i16 LocationOffsetType;
 u32 EncodingTableLocation;
 u32 GlyfTableLocation;
 
-u32 BigBytesToU32(u8* bytes)
-{
+u32 BigBytesToU32(u8* bytes) {
     u32 result = bytes[0];
     result <<= 8;
     result += bytes[1];
@@ -30,24 +29,21 @@ u32 BigBytesToU32(u8* bytes)
     return result;
 }
 
-u16 BigBytesToU16(u8* bytes)
-{
+u16 BigBytesToU16(u8* bytes) {
     u16 result = bytes[0];
     result <<= 8;
     result += bytes[1];
     return result;
 }
 
-i16 BigBytesToI16(u8* bytes)
-{
+i16 BigBytesToI16(u8* bytes) {
     i16 result = bytes[0];
     result <<= 8;
     result += bytes[1];
     return result;
 }
 
-int tagsEqual(const char* tagA, const char* tagB)
-{
+int tagsEqual(const char* tagA, const char* tagB) {
     return
         tagA[0] == tagB[0] &&
         tagA[1] == tagB[1] &&
@@ -55,25 +51,21 @@ int tagsEqual(const char* tagA, const char* tagB)
         tagA[3] == tagB[3];
 }
 
-void InitFont()
-{
+void InitFont() {
     //-----------------------------
     // Load Font File into Memory
     {
         const wchar_t* filePath = L"C:\\Users\\Marvin\\source\\repos\\MkEdit\\consola.ttf";
         void* file = CreateFileW(
-            filePath,
-            GENERIC_READ,
-            FILE_SHARE_READ,
-            NULL,
-            OPEN_EXISTING,
-            0,
-            NULL);
+                filePath,
+                GENERIC_READ,
+                FILE_SHARE_READ,
+                NULL,
+                OPEN_EXISTING,
+                0,
+                NULL);
 
-        LARGE_INTEGER fileSizeStruct;
-        GetFileSizeEx(file, &fileSizeStruct);
-        i64 fileSize = fileSizeStruct.QuadPart;
-
+        u32 fileSize = GetFileSize(file, NULL);
         Font = (u8*)HeapAlloc(Heap, 0, fileSize);
         u32 bytesRead;
         ReadFile(file, Font, fileSize, &bytesRead, NULL);
@@ -99,20 +91,15 @@ void InitFont()
         // 4 - offset
         // 4 - length
 
-        for (int i = 0; i != fontTableCount; i++)
-        {
+        for (int i = 0; i != fontTableCount; i++) {
             u32 offset = 12 + i * 16;
             char* tag = (char*)(Font + offset);
             u32 location = BigBytesToU32(Font + offset + 8);
 
-            if (tagsEqual(tag, "head"))
-                headTableLocation = location;
-            else if (tagsEqual(tag, "loca"))
-                LocaTableLocation = location;
-            else if (tagsEqual(tag, "cmap"))
-                cmapTableLocation = location;
-            else if (tagsEqual(tag, "glyf"))
-                GlyfTableLocation = location;
+            if (tagsEqual(tag, "head")) headTableLocation = location;
+            else if (tagsEqual(tag, "loca")) LocaTableLocation = location;
+            else if (tagsEqual(tag, "cmap")) cmapTableLocation = location;
+            else if (tagsEqual(tag, "glyf")) GlyfTableLocation = location;
         }
     }
 
@@ -156,8 +143,7 @@ void InitFont()
 
         u32 baseOffset = cmapTableLocation + 4;
         EncodingTableLocation = 0xFFFFFFFF;
-        for (int i = 0; i != encodingCount; i++)
-        {
+        for (int i = 0; i != encodingCount; i++) {
             u32 offset = baseOffset + i * 8;
             u16 platformId = BigBytesToU16(Font + offset);
             if (platformId == 0) // Unicode
@@ -173,8 +159,7 @@ void InitFont()
     }
 }
 
-int FindGlyph(u16 codepoint, u32* location, u32* length)
-{
+int FindGlyph(u16 codepoint, u32* location, u32* length) {
     //----------------------
     // Search Mapping Table
     u16 glyphId = 0;
@@ -202,29 +187,22 @@ int FindGlyph(u16 codepoint, u32* location, u32* length)
         u32 idDeltasOffset = startCodesOffset + codesLength;
         u32 idRangesOffset = idDeltasOffset + codesLength;
 
-        for (int i = 0; i != segmentCount; i++)
-        {
+        for (int i = 0; i != segmentCount; i++) {
             u32 indexOffset = i * 2;
             u16 endCode = BigBytesToU16(Font + endCodesOffset + indexOffset);
-            if (endCode >= codepoint)
-            {
+            if (endCode >= codepoint) {
                 u16 startCode = BigBytesToU16(Font + startCodesOffset + indexOffset);
-                if (startCode <= codepoint)
-                {
+                if (startCode <= codepoint) {
                     u16 idDelta = BigBytesToU16(Font + idDeltasOffset + indexOffset);
                     u8* idRangeOffsetPointer = Font + idRangesOffset + indexOffset;
                     u16 idRangeOffset = BigBytesToU16(idRangeOffsetPointer);
-                    if (idRangeOffset != 0)
-                    {
+                    if (idRangeOffset != 0) {
                         u8* glyphIdPointer = idRangeOffset + 2u * (codepoint - startCode) + idRangeOffsetPointer;
                         u16 initGlyphId = BigBytesToU16(glyphIdPointer);
-                        if (initGlyphId != 0)
-                        {
+                        if (initGlyphId != 0) {
                             glyphId = (initGlyphId + idDelta) % 65536u;
                         }
-                    }
-                    else
-                    {
+                    } else {
                         glyphId = (codepoint + idDelta) & 65536u;
                     }
                 }
@@ -232,21 +210,17 @@ int FindGlyph(u16 codepoint, u32* location, u32* length)
             }
         }
 
-        if (glyphId == 0)
-        {
+        if (glyphId == 0) {
             return 0;
         }
     }
 
     u32 nextLocation;
-    if (LocationOffsetType)
-    {
+    if (LocationOffsetType) {
         u32 index = LocaTableLocation + glyphId * 4;
         *location = BigBytesToU32(Font + index);
         nextLocation = BigBytesToU32(Font + index + 4);
-    }
-    else
-    {
+    } else {
         u32 index = LocaTableLocation + glyphId * 2;
         *location = BigBytesToU16(Font + index);
         nextLocation = BigBytesToU16(Font + index + 2);
@@ -257,11 +231,10 @@ int FindGlyph(u16 codepoint, u32* location, u32* length)
 }
 
 int APIENTRY WinMain(
-    HINSTANCE instance,
-    HINSTANCE prevInstance,
-    PSTR commandLine,
-    int showCommands)
-{
+        HINSTANCE instance,
+        HINSTANCE prevInstance,
+        PSTR commandLine,
+        int showCommands) {
     Heap = GetProcessHeap();
     InitFont();
 

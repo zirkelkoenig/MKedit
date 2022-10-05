@@ -1,8 +1,17 @@
 #include <Windows.h>
+#include <math.h>
 #include <stdlib.h>
 #include <wchar.h>
 
 void* Heap;
+#define MK_ALLOC(size) HeapAlloc(Heap, 0, size);
+#define MK_REALLOC(pointer, size) HeapReAlloc(Heap, 0, pointer, size);
+#define MK_FREE(pointer) HeapFree(Heap, 0, pointer)
+#define MK_MEMCOPY(destination, source, size) CopyMemory(destination, source, size)
+
+#define MK_LIST_IMPLEMENTATION
+#include "MK_List.h"
+#undef MK_LIST_IMPLEMENTATION
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -15,8 +24,43 @@ typedef long i32;
 typedef long long i64;
 
 typedef struct {
+    float X;
+    float Y;
+} Vector2F;
+
+Vector2F Vector2F_Add(Vector2F a, Vector2F b) {
+    Vector2F result;
+    result.X = a.X + b.X;
+    result.Y = a.Y + b.Y;
+    return result;
+}
+
+Vector2F Vector2F_Scale(Vector2F v, float alpha) {
+    Vector2F result;
+    result.X = v.X * alpha;
+    result.Y = v.Y * alpha;
+    return result;
+}
+
+int FactorialI(int n) {
+    if (n == 0) {
+        return 1;
+    }
+
+    int result = 1;
+    for (int i = 1; i <= n; i++) {
+        result *= i;
+    }
+    return result;
+}
+
+typedef struct {
     i16 X;
     i16 Y;
+} Vector2I;
+
+typedef struct {
+    Vector2I Point;
     i8 OnCurve;
 } GlyphCoord;
 
@@ -311,8 +355,8 @@ GlyphCoord* GetGlyphData(u32 location, u16* count) {
     GlyphCoord* coords = (GlyphCoord*)HeapAlloc(Heap, 0, *count * sizeof(GlyphCoord));
     for (u16 i = 0u; i != *count; i++) {
         GlyphCoord* coord = &coords[i];
-        coord->X = xCoords[i];
-        coord->Y = yCoords[i];
+        coord->Point.X = xCoords[i];
+        coord->Point.Y = yCoords[i];
         coord->OnCurve = flags[i] & 0x01u;
     }
 
@@ -321,6 +365,33 @@ GlyphCoord* GetGlyphData(u32 location, u16* count) {
     HeapFree(Heap, 0, xCoords);
     HeapFree(Heap, 0, yCoords);
     return coords;
+}
+
+Vector2F* GetBezierVertices(Vector2F* points, int pointCount, int vertexCount) {
+    int n = pointCount - 1;
+    float interval = 1.0f / (vertexCount + 1);
+
+    float nFactorial = (float)FactorialI(n);
+    float* combinations = (float*)HeapAlloc(Heap, 0, (n + 1) * sizeof(float));
+    for (int i = 0; i <= n; i++) {
+        combinations[i] = nFactorial / (float)(FactorialI(i) * FactorialI(n - i));
+    }
+
+    Vector2F* vertices = (Vector2F*)HeapAlloc(Heap, 0, vertexCount * sizeof(Vector2F));
+    for (int j = 0; j != vertexCount; j++) {
+        float t = (j + 1) * interval;
+        float tComplement = 1.0f - t;
+
+        Vector2F vertex = { 0 };
+        for (int i = 0; i <= n; i++) {
+            float factor = powf(t, i) * powf(tComplement, n - i);
+            vertex = Vector2F_Add(vertex, Vector2F_Scale(points[i], combinations[i] * factor));
+        }
+        vertices[j] = vertex;
+    }
+
+    HeapFree(Heap, 0, combinations);
+    return vertices;
 }
 
 BITMAPINFO BitmapInfo;
@@ -422,6 +493,39 @@ int APIENTRY WinMain(
     u16 coordCount;
     GlyphCoords = GetGlyphData(location, &coordCount);
 
+    Vector2F* vertices = (Vector2F*)Mk_List_Create(sizeof(Vector2F));
+    Vector2F* controlPoints = (Vector2F*)Mk_List_Create(sizeof(Vector2F));
+    int controlPointCount = 0;
+    for (u16 i = 0u; i != coordCount; i++) {
+        Vector2F coord;
+        coord.X = GlyphCoords[i].Point.X;
+        coord.Y = GlyphCoords[i].Point.Y;
+
+        if (GlyphCoords[i].OnCurve) {
+            if (controlPointCount != 0) {
+                Mk_List_Push(&vertices, controlPoints[0]);
+
+                if (controlPointCount > 1) {
+                    Mk_List_Push(&controlPoints, coord);
+                    controlPointCount++;
+
+                    Vector2F* bezierVertices = GetBezierVertices(controlPoints, controlPointCount, 8);
+                    Mk_List_PushArray(&vertices, bezierVertices, 8);
+                    HeapFree(Heap, 0, bezierVertices);
+                }
+
+                Mk_List_Clear(controlPoints);
+            }
+            Mk_List_Push(&controlPoints, coord);
+            controlPointCount = 1;
+        } else {
+            Mk_List_Push(&controlPoints, coord);
+            controlPointCount++;
+        }
+    }
+    Mk_List_Push(&vertices, controlPoints[0]);
+    Mk_List_Destroy(controlPoints);
+
     BitmapHalfX = Mk_Max(labs(GlyphMinX - 2), labs(GlyphMaxX + 2));
     BitmapHalfY = Mk_Max(labs(GlyphMinY - 2), labs(GlyphMaxY + 2));
     BitmapWidth = 2 * BitmapHalfX;
@@ -431,12 +535,10 @@ int APIENTRY WinMain(
     for (long i = 0; i != bitmapLength; i++) {
         BitmapContent[i] = 0x00FFFFFFu;
     }
-    for (u16 i = 0u; i != coordCount; i++) {
-        if (GlyphCoords[i].OnCurve) {
-            PaintFilledPoint(GlyphCoords[i].X, GlyphCoords[i].Y);
-        } else {
-            PaintHollowPoint(GlyphCoords[i].X, GlyphCoords[i].Y);
-        }
+
+    size_t vertexCount = Mk_List_Count(vertices);
+    for (size_t i = 0; i != vertexCount; i++) {
+        PaintFilledPoint(vertices[i].X, vertices[i].Y);
     }
 
     BitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);

@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include <stdlib.h>
 #include <wchar.h>
 
 void* Heap;
@@ -24,6 +25,11 @@ u32 LocaTableLocation;
 i16 LocationOffsetType;
 u32 EncodingTableLocation;
 u32 GlyfTableLocation;
+GlyphCoord* GlyphCoords;
+i16 GlyphMinX;
+i16 GlyphMaxX;
+i16 GlyphMinY;
+i16 GlyphMaxY;
 
 u32 BigBytesToU32(u8* bytes) {
     u32 result = bytes[0];
@@ -262,12 +268,10 @@ GlyphCoord* GetGlyphData(u32 location, u16* count) {
 
     i16 contourCount = BigBytesToI16(&Font[currentLocation]);
 
-#if _DEBUG
-    i16 xMin = BigBytesToI16(&Font[currentLocation + 2u]);
-    i16 yMin = BigBytesToI16(&Font[currentLocation + 4u]);
-    i16 xMax = BigBytesToI16(&Font[currentLocation + 6u]);
-    i16 yMax = BigBytesToI16(&Font[currentLocation + 8u]);
-#endif
+    GlyphMinX = BigBytesToI16(&Font[currentLocation + 2u]);
+    GlyphMinY = BigBytesToI16(&Font[currentLocation + 4u]);
+    GlyphMaxX = BigBytesToI16(&Font[currentLocation + 6u]);
+    GlyphMaxY = BigBytesToI16(&Font[currentLocation + 8u]);
 
     currentLocation += 10u;
 
@@ -319,18 +323,159 @@ GlyphCoord* GetGlyphData(u32 location, u16* count) {
     return coords;
 }
 
+BITMAPINFO BitmapInfo;
+u32* BitmapContent;
+long BitmapWidth;
+long BitmapHeight;
+long BitmapHalfX;
+long BitmapHalfY;
+
+void PaintWindow(HDC deviceContext, RECT windowRect) {
+    StretchDIBits(
+            deviceContext,
+            0,
+            0,
+            windowRect.right - windowRect.left,
+            windowRect.bottom - windowRect.top,
+            0,
+            0,
+            BitmapWidth,
+            BitmapHeight,
+            BitmapContent,
+            &BitmapInfo,
+            DIB_RGB_COLORS,
+            SRCCOPY);
+}
+
+LRESULT WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+        case WM_DESTROY:
+        {
+            PostQuitMessage(0);
+            return 0;
+        }
+
+        case WM_PAINT:
+        {
+            PAINTSTRUCT paintStruct;
+            HDC deviceContext = BeginPaint(window, &paintStruct);
+            RECT rect;
+            GetClientRect(window, &rect);
+            PaintWindow(deviceContext, rect);
+            EndPaint(window, &paintStruct);
+            return 0;
+        }
+
+        default:
+        {
+            return DefWindowProcW(window, message, wParam, lParam);
+        }
+    }
+}
+
+long Mk_Max(long a, long b) {
+    return a > b ? a : b;
+}
+
+void PaintFilledPoint(long x, long y) {
+    long centerX = BitmapHalfX + x;
+    long left = centerX - 1;
+    long right = centerX + 1;
+    long centerY = BitmapHalfY + y;
+    long top = centerY - 1;
+    long bottom = centerY + 1;
+    for (long i = top; i <= bottom; i++) {
+        for (long j = left; j <= right; j++) {
+            BitmapContent[i * BitmapWidth + j] = 0x00000000u;
+        }
+    }
+}
+
+void PaintHollowPoint(long x, long y) {
+    long centerX = BitmapHalfX + x;
+    long left = centerX - 2;
+    long right = centerX + 2;
+    long centerY = BitmapHalfY + y;
+    long top = centerY - 2;
+    long bottom = centerY + 2;
+    for (long i = top; i <= bottom; i++) {
+        for (long j = left; j <= right; j++) {
+            if (i == top || i == bottom || j == left || j == right) {
+                BitmapContent[i * BitmapWidth + j] = 0x00000000u;
+            }
+        }
+    }
+}
+
 int APIENTRY WinMain(
         HINSTANCE instance,
         HINSTANCE prevInstance,
         PSTR commandLine,
         int showCommands) {
+    // TODO: maybe switch to VirtualAlloc?
     Heap = GetProcessHeap();
     InitFont();
 
     // test with letter 'u'
     u32 location;
-    if (FindGlyph(0x0075u, &location)) {
-        u16 coordCount;
-        GlyphCoord* coords = GetGlyphData(location, &coordCount);
+    FindGlyph(0x0075u, &location);
+    u16 coordCount;
+    GlyphCoords = GetGlyphData(location, &coordCount);
+
+    BitmapHalfX = Mk_Max(labs(GlyphMinX - 2), labs(GlyphMaxX + 2));
+    BitmapHalfY = Mk_Max(labs(GlyphMinY - 2), labs(GlyphMaxY + 2));
+    BitmapWidth = 2 * BitmapHalfX;
+    BitmapHeight = 2 * BitmapHalfY;
+    long bitmapLength = BitmapWidth * BitmapHeight;
+    BitmapContent = (u32*)HeapAlloc(Heap, 0, bitmapLength * sizeof(u32));
+    for (long i = 0; i != bitmapLength; i++) {
+        BitmapContent[i] = 0x00FFFFFFu;
     }
+    for (u16 i = 0u; i != coordCount; i++) {
+        if (GlyphCoords[i].OnCurve) {
+            PaintFilledPoint(GlyphCoords[i].X, GlyphCoords[i].Y);
+        } else {
+            PaintHollowPoint(GlyphCoords[i].X, GlyphCoords[i].Y);
+        }
+    }
+
+    BitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    BitmapInfo.bmiHeader.biWidth = BitmapWidth;
+    BitmapInfo.bmiHeader.biHeight = BitmapHeight;
+    BitmapInfo.bmiHeader.biPlanes = 1;
+    BitmapInfo.bmiHeader.biBitCount = 32;
+    BitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+    WNDCLASSEXW windowClass = { 0 };
+    windowClass.cbSize = sizeof(WNDCLASSEXW);
+    windowClass.style = CS_HREDRAW | CS_VREDRAW;
+    windowClass.lpfnWndProc = WindowProc;
+    windowClass.hInstance = instance;
+    windowClass.lpszClassName = L"MKedit";
+    RegisterClassExW(&windowClass);
+
+    HWND window = CreateWindowExW(
+            0,
+            L"Mkedit",
+            L"Mkedit",
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT, CW_USEDEFAULT,
+            CW_USEDEFAULT, CW_USEDEFAULT,
+            NULL,
+            NULL,
+            instance,
+            NULL);
+    ShowWindow(window, showCommands);
+
+    MSG message;
+    int messageRc;
+    while ((messageRc = GetMessageW(&message, NULL, 0, 0)) != 0) {
+        if (messageRc == -1) {
+            return -1;
+        }
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+
+    return 0;
 }

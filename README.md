@@ -11,8 +11,7 @@ I'm personally not a fan of the fact that many editor devs feel the need to inve
 ## Font File Parser
 In the beginning, only TTF fonts using Unicode BMP encoding will be supported. I'm currently using Microsoft's Consolas font for testing.
 
-The mapping of codepoints to glyph IDs is now up and running.
+Glyph contour points for a unicode letter can now be retrieved and rendered.
 
 # Next Steps
-- Parsing the actual font glyphs
 - Glyph rasterization

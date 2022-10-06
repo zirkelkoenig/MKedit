@@ -4,6 +4,8 @@
     <ClCompile Include="Main.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Mk_List.h" />
+    <ClInclude Include="MkList.h" />
+    <ClInclude Include="MkMath.h" />
+    <ClInclude Include="MkOpenType.h" />
   </ItemGroup>
 </Project>

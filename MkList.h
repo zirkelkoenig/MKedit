@@ -16,23 +16,26 @@
  *      MK_MEMCOPY(destination, source, size)
  */
 
-// T* Mk_List_Create(size_t elementSize)
-uint8_t* Mk_List_Create(size_t elementSize);
+typedef size_t MkSize;
+typedef uint8_t MkU8;
 
-// void Mk_List_Destroy(T* list)
-void Mk_List_Destroy(uint8_t* list);
+// T* Mk_ListCreate(size_t elementSize)
+MkU8* MkList_Create(MkSize elementSize);
 
-// size_t Mk_List_Count(T* list)
-#define Mk_List_Count(list) GetHeader((uint8_t*)(list))->Count
+// void MkList_Destroy(T* list)
+void MkList_Destroy(MkU8* list);
 
-// int Mk_List_Push(T** list, T element)
-#define Mk_List_Push(list, element) (Mk_List_MaybeGrow((uint8_t**)(list), 1u) ? ((*(list))[GetHeader((uint8_t*)(*(list)))->Count++] = element, 1) : 0)
+// MkSize MkList_Count(T* list)
+#define MkList_Count(list) GetHeader((MkU8*)(list))->Count
 
-// int Mk_List_PushArray(T** list, T* array, size_t count)
-int Mk_List_PushArray(uint8_t** list, uint8_t* array, size_t count);
+// int MkList_Push(T** list, T element)
+#define MkList_Push(list, element) (MaybeGrow((MkU8**)(list), 1u) ? ((*(list))[GetHeader((MkU8*)(*(list)))->Count++] = element, 1) : 0)
 
-// void Mk_List_Clear(T* list)
-#define Mk_List_Clear(list) GetHeader((uint8_t*)(list))->Count = 0u
+// int MkList_PushArray(T** list, T* array, size_t count)
+int MkList_PushArray(MkU8** list, MkU8* array, MkSize count);
+
+// void MkList_Clear(T* list)
+#define MkList_Clear(list) GetHeader((MkU8*)(list))->Count = 0u
 
 #endif
 
@@ -58,37 +61,37 @@ int Mk_List_PushArray(uint8_t** list, uint8_t* array, size_t count);
 #endif
 
 typedef struct {
-    size_t Count;
-    size_t Capacity;
-    size_t ElementSize;
-} Mk_List_Header;
+    MkSize Count;
+    MkSize Capacity;
+    MkSize ElementSize;
+} MkList_Header;
 
-static inline Mk_List_Header* GetHeader(uint8_t* list) {
-    return (Mk_List_Header*)(list - sizeof(Mk_List_Header));
+static inline MkList_Header* GetHeader(MkU8* list) {
+    return (MkList_Header*)(list - sizeof(MkList_Header));
 }
 
-static inline uint8_t* GetList(Mk_List_Header* header) {
-    return (uint8_t*)header + sizeof(Mk_List_Header);
+static inline MkU8* GetList(MkList_Header* header) {
+    return (MkU8*)header + sizeof(MkList_Header);
 }
 
-uint8_t* Mk_List_Create(size_t elementSize) {
-    Mk_List_Header* header = (Mk_List_Header*)MK_ALLOC(sizeof(Mk_List_Header) + MK_LIST_GROW_SIZE * elementSize);
+MkU8* MkList_Create(MkSize elementSize) {
+    MkList_Header* header = (MkList_Header*)MK_ALLOC(sizeof(MkList_Header) + MK_LIST_GROW_SIZE * elementSize);
     if (!header) return NULL;
-    header->Count = 0;
+    header->Count = 0u;
     header->Capacity = MK_LIST_GROW_SIZE;
     header->ElementSize = elementSize;
     return GetList(header);
 }
 
-void Mk_List_Destroy(uint8_t* list) {
+void MkList_Destroy(MkU8* list) {
     MK_FREE(GetHeader(list));
 }
 
-static int Mk_List_MaybeGrow(uint8_t** list, size_t additionalSpace) {
-    Mk_List_Header* header = GetHeader(*list);
+static int MaybeGrow(MkU8** list, MkSize additionalSpace) {
+    MkList_Header* header = GetHeader(*list);
     if (header->Count + additionalSpace >= header->Capacity) {
-        size_t newCapacity = header->Capacity + (additionalSpace > MK_LIST_GROW_SIZE ? additionalSpace : MK_LIST_GROW_SIZE);
-        header = (Mk_List_Header*)MK_REALLOC(header, sizeof(Mk_List_Header) + newCapacity * header->ElementSize);
+        MkSize newCapacity = header->Capacity + (additionalSpace > MK_LIST_GROW_SIZE ? additionalSpace : MK_LIST_GROW_SIZE);
+        header = (MkList_Header*)MK_REALLOC(header, sizeof(MkList_Header) + newCapacity * header->ElementSize);
         if (!header) return 0;
         header->Capacity = newCapacity;
         *list = GetList(header);
@@ -96,9 +99,9 @@ static int Mk_List_MaybeGrow(uint8_t** list, size_t additionalSpace) {
     return 1;
 }
 
-int Mk_List_PushArray(uint8_t** list, uint8_t* array, size_t count) {
-    if (!Mk_List_MaybeGrow(list, count)) return 0;
-    Mk_List_Header* header = GetHeader(*list);
+int MkList_PushArray(MkU8** list, MkU8* array, MkSize count) {
+    if (!MaybeGrow(list, count)) return 0;
+    MkList_Header* header = GetHeader(*list);
     MK_MEMCOPY(&(*list)[header->Count * header->ElementSize], array, count * header->ElementSize);
     header->Count += count;
     return 1;

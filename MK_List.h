@@ -3,7 +3,20 @@
 
 #include <stdint.h>
 
-// T* Mk_List_Create(sizeof(T))
+/* This library provides a dynamic array.
+ * 
+ * This is a single-file library, so to use it, at one place in your codebase you need to include it with MK_LIST_IMPLEMENTATION defined.
+ * 
+ * If the list needs to grow, it does so by the amount defined by the MK_LIST_GROW_SIZE macro, which you can set yourself if you need to.
+ * 
+ * This library by default uses the C standard headers to manage memory. You can override this by settings ALL of the following macros:
+ *      MK_ALLOC(size)
+ *      MK_REALLOC(pointer, size)
+ *      MK_FREE(pointer)
+ *      MK_MEMCOPY(destination, source, size)
+ */
+
+// T* Mk_List_Create(size_t elementSize)
 uint8_t* Mk_List_Create(size_t elementSize);
 
 // void Mk_List_Destroy(T* list)
@@ -23,9 +36,14 @@ int Mk_List_PushArray(uint8_t** list, uint8_t* array, size_t count);
 
 #endif
 
+
 #ifdef MK_LIST_IMPLEMENTATION
 
-#ifndef MK_ALLOC
+#if !(defined(MK_ALLOC) && defined(MK_REALLOC) && defined(MK_FREE) && defined(MK_MEMCOPY))
+#if defined(MK_ALLOC) || defined(MK_REALLOC) || defined(MK_FREE) || defined(MK_MEMCOPY)
+#error "You need to either define all or none of the MK header memory macros!"
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -35,7 +53,9 @@ int Mk_List_PushArray(uint8_t** list, uint8_t* array, size_t count);
 #define MK_MEMCOPY(destination, source, size) memcpy(destination, source, size)
 #endif
 
+#ifndef MK_LIST_GROW_SIZE
 #define MK_LIST_GROW_SIZE 32u
+#endif
 
 typedef struct {
     size_t Count;
@@ -43,11 +63,11 @@ typedef struct {
     size_t ElementSize;
 } Mk_List_Header;
 
-static Mk_List_Header* GetHeader(uint8_t* list) {
+static inline Mk_List_Header* GetHeader(uint8_t* list) {
     return (Mk_List_Header*)(list - sizeof(Mk_List_Header));
 }
 
-static uint8_t* GetList(Mk_List_Header* header) {
+static inline uint8_t* GetList(Mk_List_Header* header) {
     return (uint8_t*)header + sizeof(Mk_List_Header);
 }
 
@@ -64,7 +84,7 @@ void Mk_List_Destroy(uint8_t* list) {
     MK_FREE(GetHeader(list));
 }
 
-int Mk_List_MaybeGrow(uint8_t** list, size_t additionalSpace) {
+static int Mk_List_MaybeGrow(uint8_t** list, size_t additionalSpace) {
     Mk_List_Header* header = GetHeader(*list);
     if (header->Count + additionalSpace >= header->Capacity) {
         size_t newCapacity = header->Capacity + (additionalSpace > MK_LIST_GROW_SIZE ? additionalSpace : MK_LIST_GROW_SIZE);

@@ -1,27 +1,29 @@
 #include <Windows.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <wchar.h>
 
 void* Heap;
-#define MK_ALLOC(size) HeapAlloc(Heap, 0, size);
-#define MK_REALLOC(pointer, size) HeapReAlloc(Heap, 0, pointer, size);
-#define MK_FREE(pointer) HeapFree(Heap, 0, pointer)
+#define MK_ALLOC(size) HeapAlloc(Heap, 0u, size);
+#define MK_REALLOC(pointer, size) HeapReAlloc(Heap, 0u, pointer, size);
+#define MK_FREE(pointer) HeapFree(Heap, 0u, pointer)
 #define MK_MEMCOPY(destination, source, size) CopyMemory(destination, source, size)
 
 #define MK_LIST_IMPLEMENTATION
-#include "MK_List.h"
+#include "Mk_List.h"
 #undef MK_LIST_IMPLEMENTATION
 
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned long u32;
-typedef unsigned long long u64;
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef size_t uMax;
 
-typedef signed char i8;
-typedef short i16;
-typedef long i32;
-typedef long long i64;
+typedef int8_t i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
 
 typedef struct {
     float X;
@@ -62,52 +64,52 @@ typedef struct {
 typedef struct {
     Vector2I Point;
     i8 OnCurve;
-} GlyphCoord;
+} GlyphPoint;
 
 u8* Font;
 u32 LocaTableLocation;
 i16 LocationOffsetType;
 u32 EncodingTableLocation;
 u32 GlyfTableLocation;
-GlyphCoord* GlyphCoords;
 i16 GlyphMinX;
 i16 GlyphMaxX;
 i16 GlyphMinY;
 i16 GlyphMaxY;
 
 u32 BigBytesToU32(u8* bytes) {
-    u32 result = bytes[0];
-    result <<= 8;
-    result += bytes[1];
-    result <<= 8;
-    result += bytes[2];
-    result <<= 8;
-    result += bytes[3];
+    u32 result = bytes[0u];
+    result <<= 8u;
+    result += bytes[1u];
+    result <<= 8u;
+    result += bytes[2u];
+    result <<= 8u;
+    result += bytes[3u];
     return result;
 }
 
 u16 BigBytesToU16(u8* bytes) {
-    u16 result = bytes[0];
-    result <<= 8;
-    result += bytes[1];
+    u16 result = bytes[0u];
+    result <<= 8u;
+    result += bytes[1u];
     return result;
 }
 
 i16 BigBytesToI16(u8* bytes) {
-    i16 result = bytes[0];
-    result <<= 8;
-    result += bytes[1];
+    i16 result = bytes[0u];
+    result <<= 8u;
+    result += bytes[1u];
     return result;
 }
 
 int tagsEqual(const char* tagA, const char* tagB) {
     return
-        tagA[0] == tagB[0] &&
-        tagA[1] == tagB[1] &&
-        tagA[2] == tagB[2] &&
-        tagA[3] == tagB[3];
+            tagA[0u] == tagB[0u] &&
+            tagA[1u] == tagB[1u] &&
+            tagA[2u] == tagB[2u] &&
+            tagA[3u] == tagB[3u];
 }
 
+// @TODO: reorganize the whole font file thing into its own file
 void InitFont() {
     //-----------------------------
     // Load Font File into Memory
@@ -119,11 +121,11 @@ void InitFont() {
                 FILE_SHARE_READ,
                 NULL,
                 OPEN_EXISTING,
-                0,
+                0u,
                 NULL);
 
         u32 fileSize = GetFileSize(file, NULL);
-        Font = (u8*)HeapAlloc(Heap, 0, fileSize);
+        Font = (u8*)HeapAlloc(Heap, 0u, fileSize);
         u32 bytesRead;
         ReadFile(file, Font, fileSize, &bytesRead, NULL);
         CloseHandle(file);
@@ -300,7 +302,7 @@ i16* GetGlyphCoords(u8* flags, u16 count, u32* location, u8 shortFlag, u8 altern
     return coords;
 }
 
-GlyphCoord* GetGlyphData(u32 location, u16* count) {
+void GetGlyphPoints(u32 location, i16* contourCount, u16** contourEnds, GlyphPoint** points) {
     u32 currentLocation = GlyfTableLocation + location;
 
     // 2 - numberOfContours
@@ -310,7 +312,7 @@ GlyphCoord* GetGlyphData(u32 location, u16* count) {
     // 2 - yMax
     // = 10
 
-    i16 contourCount = BigBytesToI16(&Font[currentLocation]);
+    *contourCount = BigBytesToI16(&Font[currentLocation]);
 
     GlyphMinX = BigBytesToI16(&Font[currentLocation + 2u]);
     GlyphMinY = BigBytesToI16(&Font[currentLocation + 4u]);
@@ -323,19 +325,19 @@ GlyphCoord* GetGlyphData(u32 location, u16* count) {
     // 2 - instructionLength
     // instructionLength * 1 - instructions
 
-    u16* contourEndPointIndices = (u16*)HeapAlloc(Heap, 0, contourCount * sizeof(u16));
-    for (i16 i = 0u; i != contourCount; i++) {
-        contourEndPointIndices[i] = BigBytesToU16(&Font[currentLocation]);
+    *contourEnds = (u16*)HeapAlloc(Heap, 0, *contourCount * sizeof(u16));
+    for (i16 i = 0u; i != *contourCount; i++) {
+        (*contourEnds)[i] = BigBytesToU16(&Font[currentLocation]);
         currentLocation += 2u;
     }
 
     u16 instructionCount = BigBytesToU16(&Font[currentLocation]);
     currentLocation += 2u + instructionCount;
 
-    *count = contourEndPointIndices[contourCount - 1] + 1u;
-    u8* flags = (u8*)HeapAlloc(Heap, 0, *count);
+    u16 pointCount = (*contourEnds)[*contourCount - 1] + 1u;
+    u8* flags = (u8*)HeapAlloc(Heap, 0, pointCount);
     u16 index = 0u;
-    while (index != *count) {
+    while (index != pointCount) {
         u8 flag = Font[currentLocation++];
         if (flag & 0x08u) {
             u8 repeatFlag = flag - 0x08u;
@@ -349,25 +351,24 @@ GlyphCoord* GetGlyphData(u32 location, u16* count) {
         }
     }
 
-    i16* xCoords = GetGlyphCoords(flags, *count, &currentLocation, 0x02u, 0x10u);
-    i16* yCoords = GetGlyphCoords(flags, *count, &currentLocation, 0x04u, 0x20u);
+    i16* xCoords = GetGlyphCoords(flags, pointCount, &currentLocation, 0x02u, 0x10u);
+    i16* yCoords = GetGlyphCoords(flags, pointCount, &currentLocation, 0x04u, 0x20u);
 
-    GlyphCoord* coords = (GlyphCoord*)HeapAlloc(Heap, 0, *count * sizeof(GlyphCoord));
-    for (u16 i = 0u; i != *count; i++) {
-        GlyphCoord* coord = &coords[i];
-        coord->Point.X = xCoords[i];
-        coord->Point.Y = yCoords[i];
-        coord->OnCurve = flags[i] & 0x01u;
+    *points = (GlyphPoint*)HeapAlloc(Heap, 0, pointCount * sizeof(GlyphPoint));
+    for (u16 i = 0u; i != pointCount; i++) {
+        GlyphPoint point;
+        point.Point.X = xCoords[i];
+        point.Point.Y = yCoords[i];
+        point.OnCurve = flags[i] & 0x01u;
+        (*points)[i] = point;
     }
 
-    HeapFree(Heap, 0, contourEndPointIndices);
     HeapFree(Heap, 0, flags);
     HeapFree(Heap, 0, xCoords);
     HeapFree(Heap, 0, yCoords);
-    return coords;
 }
 
-Vector2F* GetBezierVertices(Vector2F* points, int pointCount, int vertexCount) {
+void GetBezierVertices(Vector2F* points, int pointCount, Vector2F* vertices, int vertexCount) {
     int n = pointCount - 1;
     float interval = 1.0f / (vertexCount + 1);
 
@@ -377,7 +378,6 @@ Vector2F* GetBezierVertices(Vector2F* points, int pointCount, int vertexCount) {
         combinations[i] = nFactorial / (float)(FactorialI(i) * FactorialI(n - i));
     }
 
-    Vector2F* vertices = (Vector2F*)HeapAlloc(Heap, 0, vertexCount * sizeof(Vector2F));
     for (int j = 0; j != vertexCount; j++) {
         float t = (j + 1) * interval;
         float tComplement = 1.0f - t;
@@ -391,7 +391,6 @@ Vector2F* GetBezierVertices(Vector2F* points, int pointCount, int vertexCount) {
     }
 
     HeapFree(Heap, 0, combinations);
-    return vertices;
 }
 
 BITMAPINFO BitmapInfo;
@@ -487,43 +486,64 @@ int APIENTRY WinMain(
     Heap = GetProcessHeap();
     InitFont();
 
-    // test with letter 'u'
+    // test with letter 'A'
     u32 location;
-    FindGlyph(0x0075u, &location);
-    u16 coordCount;
-    GlyphCoords = GetGlyphData(location, &coordCount);
+    FindGlyph(0x0041u, &location);
 
-    Vector2F* vertices = (Vector2F*)Mk_List_Create(sizeof(Vector2F));
-    Vector2F* controlPoints = (Vector2F*)Mk_List_Create(sizeof(Vector2F));
-    int controlPointCount = 0;
-    for (u16 i = 0u; i != coordCount; i++) {
-        Vector2F coord;
-        coord.X = GlyphCoords[i].Point.X;
-        coord.Y = GlyphCoords[i].Point.Y;
+    i16 contourCount;
+    u16* glyphContourEnds;
+    GlyphPoint* glyphPoints;
+    GetGlyphPoints(location, &contourCount, &glyphContourEnds, &glyphPoints);
+    u16 glyphPointCount = glyphContourEnds[contourCount - 1] + 1u;
 
-        if (GlyphCoords[i].OnCurve) {
-            if (controlPointCount != 0) {
-                Mk_List_Push(&vertices, controlPoints[0]);
-
-                if (controlPointCount > 1) {
-                    Mk_List_Push(&controlPoints, coord);
-                    controlPointCount++;
-
-                    Vector2F* bezierVertices = GetBezierVertices(controlPoints, controlPointCount, 8);
-                    Mk_List_PushArray(&vertices, bezierVertices, 8);
-                    HeapFree(Heap, 0, bezierVertices);
+    Vector2F* controlPoints = Mk_List_Create(sizeof(Vector2F));
+    u16 currentContour = 0u;
+    u16 currentGlyphContourEnd;
+    uMax currentVertexContourStart;
+    Vector2F* vertices = Mk_List_Create(sizeof(Vector2F));
+    Vector2F* bezierVertices = (Vector2F*)HeapAlloc(Heap, 0u, 8u * sizeof(Vector2F));
+    for (u16 i = 0u; i != glyphPointCount; i++) {
+        Vector2F vertex;
+        vertex.X = glyphPoints[i].Point.X;
+        vertex.Y = glyphPoints[i].Point.Y;
+        Mk_List_Push(&controlPoints, vertex);
+        
+        if (Mk_List_Count(controlPoints) == 1u) {
+            currentGlyphContourEnd = glyphContourEnds[currentContour];
+            currentVertexContourStart = i;
+        } else {
+            int isContourEnd = i == currentGlyphContourEnd;
+            if (glyphPoints[i].OnCurve) {
+                uMax controlPointCount = Mk_List_Count(controlPoints);
+                Mk_List_Push(&vertices, controlPoints[0u]);
+                if (controlPointCount > 2u) {
+                    GetBezierVertices(controlPoints, controlPointCount, bezierVertices, 8u);
+                    Mk_List_PushArray(&vertices, bezierVertices, 8u);
+                }
+                if (isContourEnd) {
+                    Mk_List_Push(&vertices, controlPoints[controlPointCount - 1u]);
                 }
 
                 Mk_List_Clear(controlPoints);
+                if (!isContourEnd) {
+                    Mk_List_Push(&controlPoints, vertex);
+                }
+            } else {
+                if (isContourEnd) {
+                    Mk_List_Push(&vertices, controlPoints[0u]);
+                    Mk_List_Push(&controlPoints, vertices[currentVertexContourStart]);
+                    GetBezierVertices(controlPoints, Mk_List_Count(controlPoints), bezierVertices, 8u);
+                    Mk_List_PushArray(&vertices, bezierVertices, 8u);
+                    Mk_List_Clear(controlPoints);
+                }
             }
-            Mk_List_Push(&controlPoints, coord);
-            controlPointCount = 1;
-        } else {
-            Mk_List_Push(&controlPoints, coord);
-            controlPointCount++;
+
+            if (isContourEnd) {
+                currentContour++;
+            }
         }
     }
-    Mk_List_Push(&vertices, controlPoints[0]);
+    HeapFree(Heap, 0u, bezierVertices);
     Mk_List_Destroy(controlPoints);
 
     BitmapHalfX = Mk_Max(labs(GlyphMinX - 2), labs(GlyphMaxX + 2));

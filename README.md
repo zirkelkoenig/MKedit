@@ -15,3 +15,5 @@ Glyph contour points for a unicode letter can now be retrieved and rendered.
 
 # Next Steps
 - Glyph rasterization
+- Text buffer
+- Text file loading (at first UTF-8 only)

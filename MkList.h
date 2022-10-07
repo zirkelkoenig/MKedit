@@ -34,6 +34,9 @@ void MkList_Destroy(MkU8* list);
 // int MkList_PushArray(T** list, T* array, size_t count)
 int MkList_PushArray(MkU8** list, MkU8* array, MkSize count);
 
+// void MkList_Remove(T* list, size_t index)
+void MkList_Remove(MkU8* list, MkSize index);
+
 // void MkList_Clear(T* list)
 #define MkList_Clear(list) GetHeader((MkU8*)(list))->Count = 0u
 
@@ -54,6 +57,7 @@ int MkList_PushArray(MkU8** list, MkU8* array, MkSize count);
 #define MK_REALLOC(pointer, size) realloc(pointer, size)
 #define MK_FREE(pointer) free(pointer)
 #define MK_MEMCOPY(destination, source, size) memcpy(destination, source, size)
+#define MK_MEMMOVE(destination, source, size) memmove(destination, source, size)
 #endif
 
 #ifndef MK_LIST_GROW_SIZE
@@ -105,6 +109,14 @@ int MkList_PushArray(MkU8** list, MkU8* array, MkSize count) {
     MK_MEMCOPY(&(*list)[header->Count * header->ElementSize], array, count * header->ElementSize);
     header->Count += count;
     return 1;
+}
+
+void MkList_Remove(MkU8* list, MkSize index) {
+    MkList_Header* header = GetHeader(list);
+    MkSize tailCount = header->Count - index - 1u;
+    MkU8* indexPointer = list + index * header->ElementSize;
+    MK_MEMMOVE(indexPointer, indexPointer + header->ElementSize, tailCount * header->ElementSize);
+    header->Count--;
 }
 
 #endif

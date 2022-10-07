@@ -49,6 +49,7 @@ void MkGetBezierVertices(MkVector2F* points, MkSize pointCount, MkVector2F* vert
 #define MK_REALLOC(pointer, size) realloc(pointer, size)
 #define MK_FREE(pointer) free(pointer)
 #define MK_MEMCOPY(destination, source, size) memcpy(destination, source, size)
+#define MK_MEMMOVE(destination, source, size) memmove(destination, source, size)
 #endif
 
 unsigned int MkFactorial(unsigned int n) {

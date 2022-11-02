@@ -11,16 +11,16 @@ typedef short i16;
 typedef long i32;
 typedef long long i64;
 
-PlatformCallbacks platform;
+PlatformCallbacks Platform;
 
-unsigned long * viewportBitmap;
-unsigned viewportWidth;
-unsigned viewportHeight;
+unsigned long * ViewportBitmap;
+unsigned ViewportWidth;
+unsigned ViewportHeight;
 
 static void ClearViewportBitmap() {
-    for (auto row = 0u; row != viewportHeight; row++) {
-        for (auto col = 0u; col != viewportWidth; col++) {
-            viewportBitmap[row * viewportWidth + col] = 0x00FFFFFFu;
+    for (auto row = 0u; row != ViewportHeight; row++) {
+        for (auto col = 0u; col != ViewportWidth; col++) {
+            ViewportBitmap[row * ViewportWidth + col] = 0x00FFFFFFu;
         }
     }
 }
@@ -274,7 +274,7 @@ int GetUnicodeGlyph(
 
         // contourCount * 2 - contourEndPointIndices
 
-        *contourEnds = (size_t *)platform.MemAlloc(*contourCount * sizeof(size_t));
+        *contourEnds = (size_t *)Platform.MemAlloc(*contourCount * sizeof(size_t));
         for (size_t i = 0u; i != *contourCount; i++) {
             (*contourEnds)[i] = BigBytesToU16(data + currentOffset + i * 2u);
         }
@@ -286,7 +286,7 @@ int GetUnicodeGlyph(
 
         currentOffset += 2u + BigBytesToU16(data + currentOffset);
 
-        u8 * flags = (u8 *)platform.MemAlloc(pointCount);
+        u8 * flags = (u8 *)Platform.MemAlloc(pointCount);
         size_t i = 0u;
         while (i != pointCount) {
             u8 flag = *(data + currentOffset++);
@@ -302,9 +302,9 @@ int GetUnicodeGlyph(
             }
         }
 
-        *points = (GlyphPoint *)platform.MemAlloc(pointCount * sizeof(GlyphPoint));
+        *points = (GlyphPoint *)Platform.MemAlloc(pointCount * sizeof(GlyphPoint));
         if (pointCount == 0u) {
-            platform.MemFree(flags);
+            Platform.MemFree(flags);
             return 1;
         }
 
@@ -343,27 +343,27 @@ int GetUnicodeGlyph(
             (*points)[i].Y = currentCoord;
         }
 
-        platform.MemFree(flags);
+        Platform.MemFree(flags);
     }
 
     return 1;
 }
 
 // TODO(mk): this stuff is just for testing
-u16 * TextLine;
-FontInfo fontInfo;
-unsigned char * FontData;
+u16 * TestTextLine;
+FontInfo TestFontInfo;
+unsigned char * TestFontData;
 
 void Setup(PlatformCallbacks platformCallbacks) {
-    platform = platformCallbacks;
+    Platform = platformCallbacks;
     
     //-----------
     // TEST CODE
-    auto textFilePath = L"C:\\Users\\Marvin\\source\\repos\\MkEdit\\testoneline.txt";
+    auto textFilePath = L"testoneline.txt";
     size_t textFileSize;
-    auto textFile = platform.GetFileContent(textFilePath, &textFileSize);
+    auto textFile = Platform.GetFileContent(textFilePath, &textFileSize);
     
-    TextLine = DynArray_Create(u16);
+    TestTextLine = DynArray_Create(u16);
     auto i = 0u;
     while (i != textFileSize) {
         u16 codepoint;
@@ -383,15 +383,15 @@ void Setup(PlatformCallbacks platformCallbacks) {
             codepoint = 0xFFFDu;
             i += 4u;
         }
-        DynArray_Add(&TextLine, codepoint);
+        DynArray_Add(&TestTextLine, codepoint);
     }
     
-    platform.MemFree(textFile);
+    Platform.MemFree(textFile);
     
-    auto fontFilePath = L"C:\\Users\\Marvin\\source\\repos\\MkEdit\\consola.ttf";
+    auto fontFilePath = L"consola.ttf";
     size_t fontFileSize;
-    FontData = platform.GetFileContent(fontFilePath, &fontFileSize);
-    FontInit(FontData, &fontInfo);
+    TestFontData = Platform.GetFileContent(fontFilePath, &fontFileSize);
+    FontInit(TestFontData, &TestFontInfo);
 }
 
 // TODO(mk): obviously just test values
@@ -406,17 +406,17 @@ struct RasterEdge {
 };
 
 void SetViewport(unsigned long * bitmap, unsigned width, unsigned height) {
-    viewportBitmap = bitmap;
-    viewportWidth = width;
-    viewportHeight = height;
+    ViewportBitmap = bitmap;
+    ViewportWidth = width;
+    ViewportHeight = height;
     ClearViewportBitmap();
 
     // Text rendering goes here
 
-    platform.ViewportUpdated();
+    Platform.ViewportUpdated();
 }
 
-#define DYNARRAY_ALLOC(size) platform.MemAlloc(size)
-#define DYNARRAY_REALLOC(pointer, size) platform.MemReAlloc(pointer, size)
-#define DYNARRAY_FREE(pointer) platform.MemFree(pointer)
+#define DYNARRAY_ALLOC(size) Platform.MemAlloc(size)
+#define DYNARRAY_REALLOC(pointer, size) Platform.MemReAlloc(pointer, size)
+#define DYNARRAY_FREE(pointer) Platform.MemFree(pointer)
 #include "DynArray.cpp"

@@ -18,3 +18,4 @@ In the beginning, only TTF fonts using Unicode BMP encoding will be supported. I
 - Font rasterization cleanup
 - Text buffer
 - Text file loading (at first UTF-8 only)
+- Text rendering with correct font size

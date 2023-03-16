@@ -1,0 +1,29 @@
+                {
+                    DynArrayAppend(&line, (wchar_t)codepoint);
+                }
+                state = Utf8ParserState::Start;
+                break;
+            }
+
+            case Utf8ParserState::Error:
+            {
+                DynArrayAppend(&line, (wchar_t)0xfffdu);
+                state = Utf8ParserState::Start;
+                *containsErrors = 1;
+                break;
+            }
+        }
+    }
+    if (state != Utf8ParserState::Start)
+    {
+        *containsErrors = 1;
+        DynArrayAppend(&line, (wchar_t)0xfffdu);
+    }
+    if (line)
+    {
+        DynArrayAppend(&lines, line);
+    }
+    return lines;
+}
+
+void Run()

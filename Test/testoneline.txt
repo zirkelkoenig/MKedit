@@ -1,1 +1,0 @@
-öäü#define MkList_Clear(list) GetHeader((MkU8*)(list))->Count = 0u

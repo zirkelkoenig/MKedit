@@ -21,7 +21,7 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{72121bd6-51ab-49d7-9352-0bb363f33d7c}</ProjectGuid>
+    <ProjectGuid>{79bb92e9-991d-494f-bf4d-ce7408166fe9}</ProjectGuid>
     <RootNamespace>MkEdit</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
@@ -127,14 +127,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="DynArray.h" />
-    <ClInclude Include="Main.h" />
-    <ClInclude Include="Platform.h" />
+    <ClCompile Include="..\..\MKlib\MkString.c" />
+    <ClCompile Include="MkEdit.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="DynArray.cpp" />
-    <ClCompile Include="Main.cpp" />
-    <ClCompile Include="PlatformWin32.cpp" />
+    <ClInclude Include="..\..\MKlib\MkLib.h" />
+    <ClInclude Include="..\..\MKlib\MkString.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

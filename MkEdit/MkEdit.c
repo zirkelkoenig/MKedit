@@ -71,17 +71,42 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
         case WM_CHAR:
         {
-            wchar_t test[] = { wparam, '\n', '\0' };
-            OutputDebugStringW(test);
+            switch (wparam) {
+                case L'\n':
+                {
+                    OutputDebugStringW(L"Line Feed\n");
+                    break;
+                }
+
+                case L'\r':
+                {
+                    OutputDebugStringW(L"Carriage Return\n");
+                    break;
+                }
+
+                case L'\b':
+                {
+                    if (cursorCol != 0) {
+                        cursorCol--;
+                        MkLib_DynArray_Remove(textBuffer[cursorRow], cursorCol);
+                        InvalidateRect(window, NULL, 1);
+                    }
+                    break;
+                }
+
+                default:
+                {
+                    MkLib_DynArray_Insert(&textBuffer[cursorRow], cursorCol, (wchar_t)wparam);
+                    cursorCol++;
+                    InvalidateRect(window, NULL, 1);
+                    break;
+                }
+            }
             break;
         }
 
         case WM_KEYDOWN:
         {
-            RECT updateRect = { 0 };
-            updateRect.right = clientWidth;
-            updateRect.bottom = clientHeight;
-
             switch (wparam) {
                 case VK_LEFT:
                 {
@@ -130,6 +155,39 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         if (cursorRow >= topVisibleLine + visibleLineCount) {
                             topVisibleLine++;
                         }
+                        InvalidateRect(window, NULL, 1);
+                    }
+                    break;
+                }
+
+                case VK_DELETE:
+                {
+                    size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                    if (cursorCol < lineLength) {
+                        MkLib_DynArray_Remove(textBuffer[cursorRow], cursorCol);
+                        lineLength--;
+                        if (cursorCol > lineLength) {
+                            cursorCol = lineLength;
+                        }
+                        InvalidateRect(window, NULL, 1);
+                    }
+                    break;
+                }
+
+                case VK_HOME:
+                {
+                    if (cursorCol != 0) {
+                        cursorCol = 0;
+                        InvalidateRect(window, NULL, 1);
+                    }
+                    break;
+                }
+
+                case VK_END:
+                {
+                    size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                    if (cursorCol < lineLength) {
+                        cursorCol = lineLength;
                         InvalidateRect(window, NULL, 1);
                     }
                     break;

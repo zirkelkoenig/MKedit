@@ -27,13 +27,18 @@ MkLib_MemCopy_Cb MkLib_MemCopy = MemCopy;
 
 size_t testLineCount;
 MkLib_StringW ** testLines;
-size_t cursorRow = 0;
-size_t cursorCol = 0;
+size_t cursorRow;
+size_t cursorCol;
 
-HFONT font;
-long lineHeight;
-unsigned int clientWidth;
-unsigned int clientHeight;
+size_t lineHeight;
+unsigned long backgroundColor;
+unsigned long textColor;
+unsigned long cursorBackgroundColor;
+
+size_t clientWidth;
+size_t clientHeight;
+size_t topVisibleLine;
+size_t visibleLineCount;
 
 LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
@@ -41,6 +46,18 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
         {
             clientWidth = LOWORD(lparam);
             clientHeight = HIWORD(lparam);
+
+            visibleLineCount = clientHeight / lineHeight;
+            size_t bottomVisibleLine = topVisibleLine + (visibleLineCount - 1);
+            if (cursorRow > bottomVisibleLine) {
+                topVisibleLine = cursorRow - (visibleLineCount - 1);
+            } else if (bottomVisibleLine >= testLineCount) {
+                if (testLineCount <= visibleLineCount) {
+                    topVisibleLine = 0;
+                } else {
+                    topVisibleLine = testLineCount - visibleLineCount;
+                }
+            }
             break;
         }
 
@@ -76,6 +93,9 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         if (cursorCol > testLines[cursorRow]->length) {
                             cursorCol = testLines[cursorRow]->length;
                         }
+                        if (cursorRow < topVisibleLine) {
+                            topVisibleLine = cursorRow;
+                        }
                         InvalidateRect(window, NULL, 1);
                     }
                     break;
@@ -88,6 +108,9 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         if (cursorCol > testLines[cursorRow]->length) {
                             cursorCol = testLines[cursorRow]->length;
                         }
+                        if (cursorRow >= topVisibleLine + visibleLineCount) {
+                            topVisibleLine++;
+                        }
                         InvalidateRect(window, NULL, 1);
                     }
                     break;
@@ -96,47 +119,51 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             return 0;
         }
 
+        case WM_CREATE:
+        {
+            HDC deviceContext = GetDC(window);
+
+            int ppi = GetDeviceCaps(deviceContext, LOGPIXELSY);
+            int lfHeight = -(10 * ppi / 72);
+            HFONT font = CreateFontW(
+                lfHeight,
+                0,
+                0,
+                0,
+                FW_DONTCARE,
+                0,
+                0,
+                0,
+                ANSI_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE,
+                L"Consolas");
+            HFONT oldFont = SelectObject(deviceContext, font);
+            if (oldFont) {
+                DeleteObject(oldFont);
+            }
+
+            TEXTMETRICW fontMetrics;
+            GetTextMetricsW(deviceContext, &fontMetrics);
+            lineHeight = fontMetrics.tmHeight;
+
+            backgroundColor = RGB(255, 255, 255);
+            textColor = RGB(0, 0, 0);
+            cursorBackgroundColor = RGB(128, 128, 128);
+
+            return 0;
+        }
+
         case WM_PAINT:
         {
             PAINTSTRUCT paintStruct;
             HDC deviceContext = BeginPaint(window, &paintStruct);
 
-            if (!font) {
-                int ppi = GetDeviceCaps(deviceContext, LOGPIXELSY);
-                int lfHeight = -(10 * ppi / 72);
-
-                font = CreateFontW(
-                    lfHeight,
-                    0,
-                    0,
-                    0,
-                    FW_DONTCARE,
-                    0,
-                    0,
-                    0,
-                    ANSI_CHARSET,
-                    OUT_DEFAULT_PRECIS,
-                    CLIP_DEFAULT_PRECIS,
-                    DEFAULT_QUALITY,
-                    DEFAULT_PITCH | FF_DONTCARE,
-                    L"Consolas");
-                HFONT oldFont = SelectObject(deviceContext, font);
-                if (oldFont) {
-                    DeleteObject(oldFont);
-                }
-
-                TEXTMETRICW fontMetrics;
-                GetTextMetricsW(deviceContext, &fontMetrics);
-                lineHeight = fontMetrics.tmHeight;
-            }
-
             RECT drawRect = { 0 };
             drawRect.right = clientWidth;
             drawRect.bottom = clientHeight;
-
-            unsigned long backgroundColor = RGB(255, 255, 255);
-            unsigned long textColor = RGB(0, 0, 0);
-            unsigned long cursorBackgroundColor = RGB(128, 128, 128);
 
             HBRUSH backgroundBrush = CreateSolidBrush(backgroundColor);
             FillRect(deviceContext, &drawRect, backgroundBrush);
@@ -144,18 +171,18 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             SetTextColor(deviceContext, textColor);
             SetBkColor(deviceContext, backgroundColor);
 
-            size_t line = 0;
-            while (drawRect.top < drawRect.bottom && line != testLineCount) {
-                if (line == cursorRow) {
+            size_t bottomVisibleLine = topVisibleLine + visibleLineCount - 1;
+            for (size_t i = topVisibleLine; i <= bottomVisibleLine && i != testLineCount; i++) {
+                if (i == cursorRow) {
                     SIZE extent;
                     GetTextExtentPoint32W(
                         deviceContext,
-                        testLines[line]->chars,
+                        testLines[i]->chars,
                         cursorCol,
                         &extent);
                     DrawTextExW(
                         deviceContext,
-                        testLines[line]->chars,
+                        testLines[i]->chars,
                         cursorCol,
                         &drawRect,
                         DT_NOPREFIX,
@@ -163,15 +190,15 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                     drawRect.left += extent.cx;
 
                     SetBkColor(deviceContext, cursorBackgroundColor);
-                    if (cursorCol < testLines[line]->length) {
+                    if (cursorCol < testLines[i]->length) {
                         GetTextExtentPoint32W(
                             deviceContext,
-                            testLines[line]->chars + cursorCol,
+                            testLines[i]->chars + cursorCol,
                             1,
                             &extent);
                         DrawTextExW(
                             deviceContext,
-                            testLines[line]->chars + cursorCol,
+                            testLines[i]->chars + cursorCol,
                             1,
                             &drawRect,
                             DT_NOPREFIX,
@@ -181,8 +208,8 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                         DrawTextExW(
                             deviceContext,
-                            testLines[line]->chars + cursorCol + 1,
-                            testLines[line]->length - (cursorCol + 1),
+                            testLines[i]->chars + cursorCol + 1,
+                            testLines[i]->length - (cursorCol + 1),
                             &drawRect,
                             DT_NOPREFIX,
                             NULL);
@@ -201,14 +228,13 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 } else {
                     DrawTextExW(
                         deviceContext,
-                        testLines[line]->chars,
-                        testLines[line]->length,
+                        testLines[i]->chars,
+                        testLines[i]->length,
                         &drawRect,
                         DT_NOPREFIX,
                         NULL);
                 }
                 drawRect.top += lineHeight;
-                line++;
             }
 
             EndPaint(window, &paintStruct);

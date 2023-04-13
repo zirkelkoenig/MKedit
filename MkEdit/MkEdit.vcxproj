@@ -127,10 +127,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\MKlib\MkDynArray.c" />
     <ClCompile Include="..\..\MKlib\MkString.c" />
     <ClCompile Include="MkEdit.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\MKlib\MkDynArray.h" />
     <ClInclude Include="..\..\MKlib\MkLib.h" />
     <ClInclude Include="..\..\MKlib\MkString.h" />
   </ItemGroup>

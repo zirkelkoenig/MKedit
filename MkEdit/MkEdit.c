@@ -1,6 +1,7 @@
 #include <windows.h>
 #include "../../MKlib/MkLib.h"
 #include "../../MKlib/MkString.h"
+#include "../../MKlib/MkDynArray.h"
 
 HANDLE heap;
 
@@ -20,13 +21,17 @@ void MemCopy(void * dest, const void * source, size_t size) {
     CopyMemory(dest, source, size);
 }
 
+void MemMove(void * dest, const void * source, size_t size) {
+    MoveMemory(dest, source, size);
+}
+
 MkLib_MemAlloc_Cb MkLib_MemAlloc = MemAlloc;
 MkLib_MemRealloc_Cb MkLib_MemRealloc = MemRealloc;
 MkLib_MemFree_Cb MkLib_MemFree = MemFree;
 MkLib_MemCopy_Cb MkLib_MemCopy = MemCopy;
+MkLib_MemMove_Cb MkLib_MemMove = MemMove;
 
-size_t testLineCount;
-MkLib_StringW ** testLines;
+wchar_t ** textBuffer;
 size_t cursorRow;
 size_t cursorCol;
 
@@ -51,13 +56,23 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             size_t bottomVisibleLine = topVisibleLine + (visibleLineCount - 1);
             if (cursorRow > bottomVisibleLine) {
                 topVisibleLine = cursorRow - (visibleLineCount - 1);
-            } else if (bottomVisibleLine >= testLineCount) {
-                if (testLineCount <= visibleLineCount) {
-                    topVisibleLine = 0;
-                } else {
-                    topVisibleLine = testLineCount - visibleLineCount;
+            } else {
+                size_t textBufferLineCount = MkLib_DynArray_Count(textBuffer);
+                if (bottomVisibleLine >= textBufferLineCount) {
+                    if (textBufferLineCount <= visibleLineCount) {
+                        topVisibleLine = 0;
+                    } else {
+                        topVisibleLine = textBufferLineCount - visibleLineCount;
+                    }
                 }
             }
+            break;
+        }
+
+        case WM_CHAR:
+        {
+            wchar_t test[] = { wparam, '\n', '\0' };
+            OutputDebugStringW(test);
             break;
         }
 
@@ -79,7 +94,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 case VK_RIGHT:
                 {
-                    if (cursorCol < testLines[cursorRow]->length) {
+                    if (cursorCol < MkLib_DynArray_Count(textBuffer[cursorRow])) {
                         cursorCol++;
                         InvalidateRect(window, NULL, 1);
                     }
@@ -90,8 +105,10 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 {
                     if (cursorRow > 0) {
                         cursorRow--;
-                        if (cursorCol > testLines[cursorRow]->length) {
-                            cursorCol = testLines[cursorRow]->length;
+
+                        size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                        if (cursorCol > lineLength) {
+                            cursorCol = lineLength;
                         }
                         if (cursorRow < topVisibleLine) {
                             topVisibleLine = cursorRow;
@@ -103,10 +120,12 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 case VK_DOWN:
                 {
-                    if (cursorRow < testLineCount - 1) {
+                    if (cursorRow < MkLib_DynArray_Count(textBuffer) - 1) {
                         cursorRow++;
-                        if (cursorCol > testLines[cursorRow]->length) {
-                            cursorCol = testLines[cursorRow]->length;
+
+                        size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                        if (cursorCol > lineLength) {
+                            cursorCol = lineLength;
                         }
                         if (cursorRow >= topVisibleLine + visibleLineCount) {
                             topVisibleLine++;
@@ -172,17 +191,20 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             SetBkColor(deviceContext, backgroundColor);
 
             size_t bottomVisibleLine = topVisibleLine + visibleLineCount - 1;
-            for (size_t i = topVisibleLine; i <= bottomVisibleLine && i != testLineCount; i++) {
+            size_t lineCount = MkLib_DynArray_Count(textBuffer);
+            for (size_t i = topVisibleLine; i <= bottomVisibleLine && i != lineCount; i++) {
+                size_t lineLength = MkLib_DynArray_Count(textBuffer[i]);
+
                 if (i == cursorRow) {
                     SIZE extent;
                     GetTextExtentPoint32W(
                         deviceContext,
-                        testLines[i]->chars,
+                        textBuffer[i],
                         cursorCol,
                         &extent);
                     DrawTextExW(
                         deviceContext,
-                        testLines[i]->chars,
+                        textBuffer[i],
                         cursorCol,
                         &drawRect,
                         DT_NOPREFIX,
@@ -190,15 +212,15 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                     drawRect.left += extent.cx;
 
                     SetBkColor(deviceContext, cursorBackgroundColor);
-                    if (cursorCol < testLines[i]->length) {
+                    if (cursorCol < lineLength) {
                         GetTextExtentPoint32W(
                             deviceContext,
-                            testLines[i]->chars + cursorCol,
+                            textBuffer[i] + cursorCol,
                             1,
                             &extent);
                         DrawTextExW(
                             deviceContext,
-                            testLines[i]->chars + cursorCol,
+                            textBuffer[i] + cursorCol,
                             1,
                             &drawRect,
                             DT_NOPREFIX,
@@ -208,8 +230,8 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                         DrawTextExW(
                             deviceContext,
-                            testLines[i]->chars + cursorCol + 1,
-                            testLines[i]->length - (cursorCol + 1),
+                            textBuffer[i] + cursorCol + 1,
+                            lineLength - (cursorCol + 1),
                             &drawRect,
                             DT_NOPREFIX,
                             NULL);
@@ -228,8 +250,8 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 } else {
                     DrawTextExW(
                         deviceContext,
-                        testLines[i]->chars,
-                        testLines[i]->length,
+                        textBuffer[i],
+                        lineLength,
                         &drawRect,
                         DT_NOPREFIX,
                         NULL);
@@ -289,7 +311,7 @@ int WinMain(HINSTANCE instance, HINSTANCE prevInstance, char * commandLine, int 
 
         CloseHandle(testTextFile);
 
-        testLines = MkLib_StringW_LinesFromUtf8(utf8, fileSize.u.LowPart, &testLineCount);
+        textBuffer = MkLib_CwDynArrayLinesFromUtf8(utf8, fileSize.u.LowPart);
         MemFree(utf8);
     }
 

@@ -5,6 +5,9 @@
     <ClCompile Include="..\..\MKlib\MkString.c">
       <Filter>Dependencies</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\MKlib\MkDynArray.c">
+      <Filter>Dependencies</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Dependencies">
@@ -16,6 +19,9 @@
       <Filter>Dependencies</Filter>
     </ClInclude>
     <ClInclude Include="..\..\MKlib\MkString.h">
+      <Filter>Dependencies</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\MKlib\MkDynArray.h">
       <Filter>Dependencies</Filter>
     </ClInclude>
   </ItemGroup>

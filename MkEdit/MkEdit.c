@@ -27,12 +27,75 @@ MkLib_MemCopy_Cb MkLib_MemCopy = MemCopy;
 
 size_t testLineCount;
 MkLib_StringW ** testLines;
+size_t cursorRow = 0;
+size_t cursorCol = 0;
 
 HFONT font;
 long lineHeight;
+unsigned int clientWidth;
+unsigned int clientHeight;
 
 LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
+        case WM_SIZE:
+        {
+            clientWidth = LOWORD(lparam);
+            clientHeight = HIWORD(lparam);
+            break;
+        }
+
+        case WM_KEYDOWN:
+        {
+            RECT updateRect = { 0 };
+            updateRect.right = clientWidth;
+            updateRect.bottom = clientHeight;
+
+            switch (wparam) {
+                case VK_LEFT:
+                {
+                    if (cursorCol > 0) {
+                        cursorCol--;
+                        InvalidateRect(window, NULL, 1);
+                    }
+                    break;
+                }
+
+                case VK_RIGHT:
+                {
+                    if (cursorCol < testLines[cursorRow]->length) {
+                        cursorCol++;
+                        InvalidateRect(window, NULL, 1);
+                    }
+                    break;
+                }
+
+                case VK_UP:
+                {
+                    if (cursorRow > 0) {
+                        cursorRow--;
+                        if (cursorCol > testLines[cursorRow]->length) {
+                            cursorCol = testLines[cursorRow]->length;
+                        }
+                        InvalidateRect(window, NULL, 1);
+                    }
+                    break;
+                }
+
+                case VK_DOWN:
+                {
+                    if (cursorRow < testLineCount - 1) {
+                        cursorRow++;
+                        if (cursorCol > testLines[cursorRow]->length) {
+                            cursorCol = testLines[cursorRow]->length;
+                        }
+                        InvalidateRect(window, NULL, 1);
+                    }
+                    break;
+                }
+            }
+            return 0;
+        }
+
         case WM_PAINT:
         {
             PAINTSTRUCT paintStruct;
@@ -67,28 +130,83 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 lineHeight = fontMetrics.tmHeight;
             }
 
-            RECT windowRect;
-            GetWindowRect(window, &windowRect);
-
             RECT drawRect = { 0 };
-            drawRect.right = windowRect.right - windowRect.left;
-            drawRect.bottom = windowRect.bottom - windowRect.top;
+            drawRect.right = clientWidth;
+            drawRect.bottom = clientHeight;
 
-            HBRUSH backgroundBrush = CreateSolidBrush(RGB(255, 255, 255));
+            unsigned long backgroundColor = RGB(255, 255, 255);
+            unsigned long textColor = RGB(0, 0, 0);
+            unsigned long cursorBackgroundColor = RGB(128, 128, 128);
+
+            HBRUSH backgroundBrush = CreateSolidBrush(backgroundColor);
             FillRect(deviceContext, &drawRect, backgroundBrush);
 
-            SetTextColor(deviceContext, RGB(0, 0, 0));
-            SetBkColor(deviceContext, RGB(255, 255, 255));
+            SetTextColor(deviceContext, textColor);
+            SetBkColor(deviceContext, backgroundColor);
 
             size_t line = 0;
             while (drawRect.top < drawRect.bottom && line != testLineCount) {
-                DrawTextExW(
-                    deviceContext,
-                    testLines[line]->chars,
-                    testLines[line]->length,
-                    &drawRect,
-                    DT_NOPREFIX,
-                    NULL);
+                if (line == cursorRow) {
+                    SIZE extent;
+                    GetTextExtentPoint32W(
+                        deviceContext,
+                        testLines[line]->chars,
+                        cursorCol,
+                        &extent);
+                    DrawTextExW(
+                        deviceContext,
+                        testLines[line]->chars,
+                        cursorCol,
+                        &drawRect,
+                        DT_NOPREFIX,
+                        NULL);
+                    drawRect.left += extent.cx;
+
+                    SetBkColor(deviceContext, cursorBackgroundColor);
+                    if (cursorCol < testLines[line]->length) {
+                        GetTextExtentPoint32W(
+                            deviceContext,
+                            testLines[line]->chars + cursorCol,
+                            1,
+                            &extent);
+                        DrawTextExW(
+                            deviceContext,
+                            testLines[line]->chars + cursorCol,
+                            1,
+                            &drawRect,
+                            DT_NOPREFIX,
+                            NULL);
+                        drawRect.left += extent.cx;
+                        SetBkColor(deviceContext, backgroundColor);
+
+                        DrawTextExW(
+                            deviceContext,
+                            testLines[line]->chars + cursorCol + 1,
+                            testLines[line]->length - (cursorCol + 1),
+                            &drawRect,
+                            DT_NOPREFIX,
+                            NULL);
+                    } else {
+                        DrawTextExW(
+                            deviceContext,
+                            L" ",
+                            1,
+                            &drawRect,
+                            DT_NOPREFIX,
+                            NULL);
+                        SetBkColor(deviceContext, backgroundColor);
+                    }
+
+                    drawRect.left = 0;
+                } else {
+                    DrawTextExW(
+                        deviceContext,
+                        testLines[line]->chars,
+                        testLines[line]->length,
+                        &drawRect,
+                        DT_NOPREFIX,
+                        NULL);
+                }
                 drawRect.top += lineHeight;
                 line++;
             }
@@ -149,11 +267,16 @@ int WinMain(HINSTANCE instance, HINSTANCE prevInstance, char * commandLine, int 
         MemFree(utf8);
     }
 
+    //---------------
+    // Window Setup
+    HCURSOR cursor = LoadCursorW(NULL, IDC_ARROW);
+
     WNDCLASSEXW windowClass = { 0 };
     windowClass.cbSize = sizeof(WNDCLASSEXW);
     windowClass.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = instance;
+    windowClass.hCursor = cursor;
     windowClass.lpszClassName = L"MKedit";
     RegisterClassExW(&windowClass);
 

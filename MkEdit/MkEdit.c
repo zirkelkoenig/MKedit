@@ -34,6 +34,7 @@ MkLib_MemMove_Cb MkLib_MemMove = MemMove;
 wchar_t ** textBuffer;
 size_t cursorRow;
 size_t cursorCol;
+size_t cursorColLast;
 
 size_t lineHeight;
 unsigned long backgroundColor;
@@ -89,6 +90,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                     if (cursorCol != 0) {
                         cursorCol--;
                         MkLib_DynArray_Remove(textBuffer[cursorRow], cursorCol);
+                        cursorColLast = cursorCol;
                         InvalidateRect(window, NULL, 1);
                     }
                     break;
@@ -98,6 +100,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 {
                     MkLib_DynArray_Insert(&textBuffer[cursorRow], cursorCol, (wchar_t)wparam);
                     cursorCol++;
+                    cursorColLast = cursorCol;
                     InvalidateRect(window, NULL, 1);
                     break;
                 }
@@ -112,6 +115,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 {
                     if (cursorCol > 0) {
                         cursorCol--;
+                        cursorColLast = cursorCol;
                         InvalidateRect(window, NULL, 1);
                     }
                     break;
@@ -121,6 +125,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 {
                     if (cursorCol < MkLib_DynArray_Count(textBuffer[cursorRow])) {
                         cursorCol++;
+                        cursorColLast = cursorCol;
                         InvalidateRect(window, NULL, 1);
                     }
                     break;
@@ -132,9 +137,12 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         cursorRow--;
 
                         size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
-                        if (cursorCol > lineLength) {
+                        if (cursorColLast <= lineLength) {
+                            cursorCol = cursorColLast;
+                        } else {
                             cursorCol = lineLength;
                         }
+
                         if (cursorRow < topVisibleLine) {
                             topVisibleLine = cursorRow;
                         }
@@ -149,9 +157,12 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         cursorRow++;
 
                         size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
-                        if (cursorCol > lineLength) {
+                        if (cursorColLast <= lineLength) {
+                            cursorCol = cursorColLast;
+                        } else {
                             cursorCol = lineLength;
                         }
+
                         if (cursorRow >= topVisibleLine + visibleLineCount) {
                             topVisibleLine++;
                         }
@@ -169,6 +180,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         if (cursorCol > lineLength) {
                             cursorCol = lineLength;
                         }
+                        cursorColLast = cursorCol;
                         InvalidateRect(window, NULL, 1);
                     }
                     break;
@@ -178,6 +190,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 {
                     if (cursorCol != 0) {
                         cursorCol = 0;
+                        cursorColLast = cursorCol;
                         InvalidateRect(window, NULL, 1);
                     }
                     break;
@@ -188,6 +201,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                     size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
                     if (cursorCol < lineLength) {
                         cursorCol = lineLength;
+                        cursorColLast = cursorCol;
                         InvalidateRect(window, NULL, 1);
                     }
                     break;

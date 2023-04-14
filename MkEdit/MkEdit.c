@@ -83,6 +83,10 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 case L'\r':
                 {
+                    if (ctrlKeyDown) {
+                        break;
+                    }
+
                     size_t currentLineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
                     size_t newLineLength = currentLineLength - cursorCol;
                     wchar_t * newLine = MkLib_DynArray_Create(wchar_t, newLineLength + 8, 8);
@@ -103,6 +107,10 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 case L'\b':
                 {
+                    if (ctrlKeyDown) {
+                        break;
+                    }
+
                     if (cursorCol != 0) {
                         cursorCol--;
                         MkLib_DynArray_Remove(textBuffer[cursorRow], cursorCol);
@@ -139,6 +147,10 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 default:
                 {
+                    if (ctrlKeyDown) {
+                        break;
+                    }
+
                     MkLib_DynArray_Insert(&textBuffer[cursorRow], cursorCol, (wchar_t)wparam);
                     cursorCol++;
                     cursorColLast = cursorCol;
@@ -152,14 +164,23 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
         case WM_KEYDOWN:
         {
             switch (wparam) {
+                
+                //-----------------
+                // Modifier Keys
                 case VK_CONTROL:
                 {
                     ctrlKeyDown = 1;
                     break;
                 }
 
+                //-------------
+                // Arrow Keys
                 case VK_LEFT:
                 {
+                    if (ctrlKeyDown) {
+                        break;
+                    }
+
                     if (cursorCol > 0) {
                         cursorCol--;
                     } else if (cursorRow != 0) {
@@ -187,6 +208,10 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 case VK_RIGHT:
                 {
+                    if (ctrlKeyDown) {
+                        break;
+                    }
+
                     if (cursorCol < MkLib_DynArray_Count(textBuffer[cursorRow])) {
                         cursorCol++;
                     } else if (cursorRow < MkLib_DynArray_Count(textBuffer) - 1) {
@@ -203,46 +228,85 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 case VK_UP:
                 {
-                    if (cursorRow > 0) {
-                        cursorRow--;
+                    if (ctrlKeyDown) {
+                        if (topVisibleLine > 0) {
+                            topVisibleLine--;
+                            if (cursorRow >= topVisibleLine + visibleLineCount) {
+                                cursorRow--;
 
-                        size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
-                        if (cursorColLast <= lineLength) {
-                            cursorCol = cursorColLast;
-                        } else {
-                            cursorCol = lineLength;
+                                size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                                if (cursorColLast <= lineLength) {
+                                    cursorCol = cursorColLast;
+                                } else {
+                                    cursorCol = lineLength;
+                                }
+                            }
                         }
+                    } else {
+                        if (cursorRow > 0) {
+                            cursorRow--;
 
-                        if (cursorRow < topVisibleLine) {
-                            topVisibleLine = cursorRow;
+                            size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                            if (cursorColLast <= lineLength) {
+                                cursorCol = cursorColLast;
+                            } else {
+                                cursorCol = lineLength;
+                            }
+
+                            if (cursorRow < topVisibleLine) {
+                                topVisibleLine = cursorRow;
+                            }
                         }
-                        InvalidateRect(window, NULL, 1);
                     }
+                    InvalidateRect(window, NULL, 1);
                     break;
                 }
 
                 case VK_DOWN:
                 {
-                    if (cursorRow < MkLib_DynArray_Count(textBuffer) - 1) {
-                        cursorRow++;
-
-                        size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
-                        if (cursorColLast <= lineLength) {
-                            cursorCol = cursorColLast;
-                        } else {
-                            cursorCol = lineLength;
-                        }
-
-                        if (cursorRow >= topVisibleLine + visibleLineCount) {
+                    size_t lineCount = MkLib_DynArray_Count(textBuffer);
+                    if (ctrlKeyDown) {
+                        if (topVisibleLine + visibleLineCount < lineCount) {
                             topVisibleLine++;
+                            if (cursorRow < topVisibleLine) {
+                                cursorRow++;
+
+                                size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                                if (cursorColLast <= lineLength) {
+                                    cursorCol = cursorColLast;
+                                } else {
+                                    cursorCol = lineLength;
+                                }
+                            }
                         }
-                        InvalidateRect(window, NULL, 1);
+                    } else {
+                        if (cursorRow < lineCount - 1) {
+                            cursorRow++;
+
+                            size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                            if (cursorColLast <= lineLength) {
+                                cursorCol = cursorColLast;
+                            } else {
+                                cursorCol = lineLength;
+                            }
+
+                            if (cursorRow >= topVisibleLine + visibleLineCount) {
+                                topVisibleLine++;
+                            }
+                        }
                     }
+                    InvalidateRect(window, NULL, 1);
                     break;
                 }
 
+                //-------------------------
+                // Nagivation Block Keys
                 case VK_DELETE:
                 {
+                    if (ctrlKeyDown) {
+                        break;
+                    }
+
                     size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
                     if (cursorCol < lineLength) {
                         MkLib_DynArray_Remove(textBuffer[cursorRow], cursorCol);
@@ -305,6 +369,69 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                     size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
                     cursorCol = lineLength;
                     cursorColLast = cursorCol;
+
+                    InvalidateRect(window, NULL, 1);
+                    break;
+                }
+
+                case VK_PRIOR:
+                {
+                    if (ctrlKeyDown) {
+                        break;
+                    }
+
+                    size_t cursorRowRelative = cursorRow - topVisibleLine;
+                    if (cursorRow >= visibleLineCount) {
+                        cursorRow -= visibleLineCount;
+                        if (cursorRowRelative <= cursorRow) {
+                            topVisibleLine = cursorRow - cursorRowRelative;
+                        } else {
+                            topVisibleLine = 0;
+                        }
+                    } else {
+                        cursorRow = 0;
+                        topVisibleLine = 0;
+                    }
+
+                    size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                    if (cursorColLast <= lineLength) {
+                        cursorCol = cursorColLast;
+                    } else {
+                        cursorCol = lineLength;
+                    }
+
+                    InvalidateRect(window, NULL, 1);
+                    break;
+                }
+
+                case VK_NEXT:
+                {
+                    if (ctrlKeyDown) {
+                        break;
+                    }
+
+                    size_t cursorRowOffset = cursorRow - topVisibleLine;
+                    size_t lineCount = MkLib_DynArray_Count(textBuffer);
+                    if (lineCount - cursorRow > visibleLineCount) {
+                        cursorRow += visibleLineCount;
+                        if (cursorRow - cursorRowOffset + (visibleLineCount - 1) < lineCount) {
+                            topVisibleLine = cursorRow - cursorRowOffset;
+                        } else {
+                            topVisibleLine = lineCount - visibleLineCount;
+                        }
+                    } else {
+                        cursorRow = lineCount - 1;
+                        if (lineCount > visibleLineCount) {
+                            topVisibleLine = lineCount - visibleLineCount;
+                        }
+                    }
+
+                    size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                    if (cursorColLast <= lineLength) {
+                        cursorCol = cursorColLast;
+                    } else {
+                        cursorCol = lineLength;
+                    }
 
                     InvalidateRect(window, NULL, 1);
                     break;

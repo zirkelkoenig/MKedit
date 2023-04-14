@@ -46,6 +46,8 @@ size_t clientHeight;
 size_t topVisibleLine;
 size_t visibleLineCount;
 
+int ctrlKeyDown;
+
 LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
         case WM_SIZE:
@@ -81,7 +83,21 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 case L'\r':
                 {
-                    OutputDebugStringW(L"Carriage Return\n");
+                    size_t currentLineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                    size_t newLineLength = currentLineLength - cursorCol;
+                    wchar_t * newLine = MkLib_DynArray_Create(wchar_t, newLineLength + 8, 8);
+                    MkLib_DynArray_SetCount(&newLine, newLineLength);
+                    MemCopy(newLine, textBuffer[cursorRow] + cursorCol, newLineLength * sizeof(wchar_t));
+                    MkLib_DynArray_Insert(&textBuffer, cursorRow + 1, newLine);
+                    MkLib_DynArray_SetCount(&textBuffer[cursorRow], cursorCol);
+                    
+                    cursorRow++;
+                    cursorCol = 0;
+                    cursorColLast = 0;
+                    if (cursorRow >= topVisibleLine + visibleLineCount) {
+                        topVisibleLine++;
+                    }
+                    InvalidateRect(window, NULL, 1);
                     break;
                 }
 
@@ -90,9 +106,34 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                     if (cursorCol != 0) {
                         cursorCol--;
                         MkLib_DynArray_Remove(textBuffer[cursorRow], cursorCol);
-                        cursorColLast = cursorCol;
-                        InvalidateRect(window, NULL, 1);
+                    } else if (cursorRow != 0) {
+                        size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                        size_t prevIndex = cursorRow - 1;
+                        size_t prevLineLength = MkLib_DynArray_Count(textBuffer[prevIndex]);
+                        MkLib_DynArray_SetCount(&textBuffer[prevIndex], prevLineLength + lineLength);
+                        MemCopy(textBuffer[prevIndex] + prevLineLength, textBuffer[cursorRow], lineLength * sizeof(wchar_t));
+                        MkLib_DynArray_Destroy(textBuffer[cursorRow]);
+                        MkLib_DynArray_Remove(textBuffer, cursorRow);
+
+                        cursorRow--;
+                        cursorCol = prevLineLength;
+
+                        if (cursorRow < topVisibleLine) {
+                            topVisibleLine--;
+                        } else {
+                            size_t bottomVisibleLine = topVisibleLine + (visibleLineCount - 1);
+                            size_t lineCount = MkLib_DynArray_Count(textBuffer);
+                            if (bottomVisibleLine >= lineCount) {
+                                if (lineCount <= visibleLineCount) {
+                                    topVisibleLine = 0;
+                                } else {
+                                    topVisibleLine = lineCount - visibleLineCount;
+                                }
+                            }
+                        }
                     }
+                    cursorColLast = cursorCol;
+                    InvalidateRect(window, NULL, 1);
                     break;
                 }
 
@@ -111,13 +152,36 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
         case WM_KEYDOWN:
         {
             switch (wparam) {
+                case VK_CONTROL:
+                {
+                    ctrlKeyDown = 1;
+                    break;
+                }
+
                 case VK_LEFT:
                 {
                     if (cursorCol > 0) {
                         cursorCol--;
-                        cursorColLast = cursorCol;
-                        InvalidateRect(window, NULL, 1);
+                    } else if (cursorRow != 0) {
+                        cursorRow--;
+                        cursorCol = MkLib_DynArray_Count(textBuffer[cursorRow]);
+
+                        if (cursorRow < topVisibleLine) {
+                            topVisibleLine--;
+                        } else {
+                            size_t bottomVisibleLine = topVisibleLine + (visibleLineCount - 1);
+                            size_t lineCount = MkLib_DynArray_Count(textBuffer);
+                            if (bottomVisibleLine >= lineCount) {
+                                if (lineCount <= visibleLineCount) {
+                                    topVisibleLine = 0;
+                                } else {
+                                    topVisibleLine = lineCount - visibleLineCount;
+                                }
+                            }
+                        }
                     }
+                    cursorColLast = cursorCol;
+                    InvalidateRect(window, NULL, 1);
                     break;
                 }
 
@@ -125,9 +189,15 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 {
                     if (cursorCol < MkLib_DynArray_Count(textBuffer[cursorRow])) {
                         cursorCol++;
-                        cursorColLast = cursorCol;
-                        InvalidateRect(window, NULL, 1);
+                    } else if (cursorRow < MkLib_DynArray_Count(textBuffer) - 1) {
+                        cursorRow++;
+                        cursorCol = 0;
+                        if (cursorRow >= topVisibleLine + visibleLineCount) {
+                            topVisibleLine++;
+                        }
                     }
+                    cursorColLast = cursorCol;
+                    InvalidateRect(window, NULL, 1);
                     break;
                 }
 
@@ -180,30 +250,75 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         if (cursorCol > lineLength) {
                             cursorCol = lineLength;
                         }
-                        cursorColLast = cursorCol;
-                        InvalidateRect(window, NULL, 1);
+                    } else {
+                        size_t lineCount = MkLib_DynArray_Count(textBuffer);
+                        if (cursorRow < lineCount - 1) {
+                            size_t nextIndex = cursorRow + 1;
+                            size_t nextLineLength = MkLib_DynArray_Count(textBuffer[nextIndex]);
+                            MkLib_DynArray_SetCount(&textBuffer[cursorRow], lineLength + nextLineLength);
+                            MemCopy(textBuffer[cursorRow] + lineLength, textBuffer[nextIndex], nextLineLength * sizeof(wchar_t));
+                            MkLib_DynArray_Destroy(textBuffer[nextIndex]);
+                            MkLib_DynArray_Remove(textBuffer, nextIndex);
+                            lineCount--;
+
+                            size_t bottomVisibleLine = topVisibleLine + (visibleLineCount - 1);
+                            if (bottomVisibleLine >= lineCount) {
+                                if (lineCount <= visibleLineCount) {
+                                    topVisibleLine = 0;
+                                } else {
+                                    topVisibleLine = lineCount - visibleLineCount;
+                                }
+                            }
+                        }
                     }
+                    cursorColLast = cursorCol;
+                    InvalidateRect(window, NULL, 1);
                     break;
                 }
 
                 case VK_HOME:
                 {
+                    if (ctrlKeyDown && cursorRow != 0) {
+                        cursorRow = 0;
+                        topVisibleLine = 0;
+                    }
                     if (cursorCol != 0) {
                         cursorCol = 0;
                         cursorColLast = cursorCol;
-                        InvalidateRect(window, NULL, 1);
                     }
+                    InvalidateRect(window, NULL, 1);
                     break;
                 }
 
                 case VK_END:
                 {
-                    size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
-                    if (cursorCol < lineLength) {
-                        cursorCol = lineLength;
-                        cursorColLast = cursorCol;
-                        InvalidateRect(window, NULL, 1);
+                    if (ctrlKeyDown) {
+                        size_t lineCount = MkLib_DynArray_Count(textBuffer);
+                        if (cursorRow < lineCount - 1) {
+                            cursorRow = lineCount - 1;
+                            if (lineCount > visibleLineCount) {
+                                topVisibleLine = lineCount - visibleLineCount;
+                            }
+                        }
                     }
+
+                    size_t lineLength = MkLib_DynArray_Count(textBuffer[cursorRow]);
+                    cursorCol = lineLength;
+                    cursorColLast = cursorCol;
+
+                    InvalidateRect(window, NULL, 1);
+                    break;
+                }
+            }
+            return 0;
+        }
+
+        case WM_KEYUP:
+        {
+            switch (wparam) {
+                case VK_CONTROL:
+                {
+                    ctrlKeyDown = 0;
                     break;
                 }
             }
@@ -283,41 +398,44 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         NULL);
                     drawRect.left += extent.cx;
 
-                    SetBkColor(deviceContext, cursorBackgroundColor);
-                    if (cursorCol < lineLength) {
-                        GetTextExtentPoint32W(
-                            deviceContext,
-                            textBuffer[i] + cursorCol,
-                            1,
-                            &extent);
-                        DrawTextExW(
-                            deviceContext,
-                            textBuffer[i] + cursorCol,
-                            1,
-                            &drawRect,
-                            DT_NOPREFIX,
-                            NULL);
-                        drawRect.left += extent.cx;
-                        SetBkColor(deviceContext, backgroundColor);
+                    if (drawRect.left < drawRect.right) {
+                        SetBkColor(deviceContext, cursorBackgroundColor);
+                        if (cursorCol < lineLength) {
+                            GetTextExtentPoint32W(
+                                deviceContext,
+                                textBuffer[i] + cursorCol,
+                                1,
+                                &extent);
+                            DrawTextExW(
+                                deviceContext,
+                                textBuffer[i] + cursorCol,
+                                1,
+                                &drawRect,
+                                DT_NOPREFIX,
+                                NULL);
+                            drawRect.left += extent.cx;
+                            SetBkColor(deviceContext, backgroundColor);
 
-                        DrawTextExW(
-                            deviceContext,
-                            textBuffer[i] + cursorCol + 1,
-                            lineLength - (cursorCol + 1),
-                            &drawRect,
-                            DT_NOPREFIX,
-                            NULL);
-                    } else {
-                        DrawTextExW(
-                            deviceContext,
-                            L" ",
-                            1,
-                            &drawRect,
-                            DT_NOPREFIX,
-                            NULL);
-                        SetBkColor(deviceContext, backgroundColor);
+                            if (drawRect.left < drawRect.right) {
+                                DrawTextExW(
+                                    deviceContext,
+                                    textBuffer[i] + cursorCol + 1,
+                                    lineLength - (cursorCol + 1),
+                                    &drawRect,
+                                    DT_NOPREFIX,
+                                    NULL);
+                            }
+                        } else {
+                            DrawTextExW(
+                                deviceContext,
+                                L" ",
+                                1,
+                                &drawRect,
+                                DT_NOPREFIX,
+                                NULL);
+                            SetBkColor(deviceContext, backgroundColor);
+                        }
                     }
-
                     drawRect.left = 0;
                 } else {
                     DrawTextExW(

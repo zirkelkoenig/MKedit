@@ -40,6 +40,9 @@ size_t lineHeight;
 unsigned long backgroundColor;
 unsigned long textColor;
 unsigned long cursorBackgroundColor;
+unsigned long statusTextColor;
+unsigned long statusBackgroundColor;
+unsigned long statusAlertBackgroundColor;
 
 size_t clientWidth;
 size_t clientHeight;
@@ -47,6 +50,7 @@ size_t topVisibleLine;
 size_t visibleLineCount;
 
 int ctrlKeyDown;
+int askExit;
 
 LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
@@ -55,7 +59,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             clientWidth = LOWORD(lparam);
             clientHeight = HIWORD(lparam);
 
-            visibleLineCount = clientHeight / lineHeight;
+            visibleLineCount = (clientHeight / lineHeight) - 1;
             size_t bottomVisibleLine = topVisibleLine + (visibleLineCount - 1);
             if (cursorRow > bottomVisibleLine) {
                 topVisibleLine = cursorRow - (visibleLineCount - 1);
@@ -83,7 +87,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 case L'\r':
                 {
-                    if (ctrlKeyDown) {
+                    if (ctrlKeyDown || askExit) {
                         break;
                     }
 
@@ -107,7 +111,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
                 case L'\b':
                 {
-                    if (ctrlKeyDown) {
+                    if (ctrlKeyDown || askExit) {
                         break;
                     }
 
@@ -151,10 +155,20 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         break;
                     }
 
-                    MkLib_DynArray_Insert(&textBuffer[cursorRow], cursorCol, (wchar_t)wparam);
-                    cursorCol++;
-                    cursorColLast = cursorCol;
-                    InvalidateRect(window, NULL, 1);
+                    if (askExit) {
+                        wchar_t letter = (wchar_t)wparam;
+                        if (letter == L'Y' || letter == L'y') {
+                            DestroyWindow(window);
+                        } else if (letter == L'N' || letter == L'n') {
+                            askExit = 0;
+                            InvalidateRect(window, NULL, 1);
+                        }
+                    } else {
+                        MkLib_DynArray_Insert(&textBuffer[cursorRow], cursorCol, (wchar_t)wparam);
+                        cursorCol++;
+                        cursorColLast = cursorCol;
+                        InvalidateRect(window, NULL, 1);
+                    }
                     break;
                 }
             }
@@ -163,6 +177,10 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 
         case WM_KEYDOWN:
         {
+            if (askExit) {
+                return 0;
+            }
+
             switch (wparam) {
                 
                 //-----------------
@@ -485,6 +503,9 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             backgroundColor = RGB(255, 255, 255);
             textColor = RGB(0, 0, 0);
             cursorBackgroundColor = RGB(128, 128, 128);
+            statusTextColor = RGB(255, 255, 255);
+            statusBackgroundColor = RGB(64, 80, 141);
+            statusAlertBackgroundColor = RGB(162, 75, 64);
 
             return 0;
         }
@@ -509,7 +530,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             for (size_t i = topVisibleLine; i <= bottomVisibleLine && i != lineCount; i++) {
                 size_t lineLength = MkLib_DynArray_Count(textBuffer[i]);
 
-                if (i == cursorRow) {
+                if (i == cursorRow && !askExit) {
                     SIZE extent;
                     GetTextExtentPoint32W(
                         deviceContext,
@@ -576,13 +597,48 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                 drawRect.top += lineHeight;
             }
 
+            drawRect.top = drawRect.bottom - lineHeight;
+            if (askExit) {
+                HBRUSH statusBackgroundBrush = CreateSolidBrush(statusAlertBackgroundColor);
+                FillRect(deviceContext, &drawRect, statusBackgroundBrush);
+
+                SetTextColor(deviceContext, statusTextColor);
+                SetBkColor(deviceContext, statusAlertBackgroundColor);
+                DrawTextExW(
+                    deviceContext,
+                    L"Quit? (Y/N)",
+                    11,
+                    &drawRect,
+                    DT_NOPREFIX,
+                    NULL);
+            } else {
+                // u64 max = 20 chars
+                size_t rowPercent = (100 * cursorRow) / (lineCount - 1);
+                wchar_t status[90];
+                size_t statusLength = swprintf(status, 90, L"Line: %zu (%zu %%)    Char: %zu", cursorRow, rowPercent, cursorCol);
+
+                HBRUSH statusBackgroundBrush = CreateSolidBrush(statusBackgroundColor);
+                FillRect(deviceContext, &drawRect, statusBackgroundBrush);
+
+                SetTextColor(deviceContext, statusTextColor);
+                SetBkColor(deviceContext, statusBackgroundColor);
+                DrawTextExW(
+                    deviceContext,
+                    status,
+                    statusLength,
+                    &drawRect,
+                    DT_NOPREFIX,
+                    NULL);
+            }
+
             EndPaint(window, &paintStruct);
             return 0;
         }
 
         case WM_CLOSE:
         {
-            DestroyWindow(window);
+            askExit = 1;
+            InvalidateRect(window, NULL, 1);
             return 0;
         }
 

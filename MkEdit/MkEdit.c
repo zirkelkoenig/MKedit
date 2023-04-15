@@ -31,18 +31,28 @@ MkLib_MemFree_Cb MkLib_MemFree = MemFree;
 MkLib_MemCopy_Cb MkLib_MemCopy = MemCopy;
 MkLib_MemMove_Cb MkLib_MemMove = MemMove;
 
+
+const int tabWidth = 4;
+const int expandTabs = 0;
+
 wchar_t ** textBuffer;
 size_t cursorRow;
 size_t cursorCol;
 size_t cursorColLast;
 
 size_t lineHeight;
+size_t avgCharWidth;
 unsigned long backgroundColor;
 unsigned long textColor;
 unsigned long cursorBackgroundColor;
 unsigned long statusTextColor;
 unsigned long statusBackgroundColor;
 unsigned long statusAlertBackgroundColor;
+
+HBRUSH backgroundBrush;
+HBRUSH cursorBrush;
+HBRUSH statusBackgroundBrush;
+HBRUSH statusAlertBackgroundBrush;
 
 size_t clientWidth;
 size_t clientHeight;
@@ -51,6 +61,243 @@ size_t visibleLineCount;
 
 int ctrlKeyDown;
 int askExit;
+
+static void Draw(HDC deviceContext) {
+    RECT drawRect = { 0 };
+    drawRect.right = clientWidth;
+    drawRect.bottom = clientHeight;
+
+    size_t lineCount = MkLib_DynArray_Count(textBuffer);
+    size_t drawLinesEnd = topVisibleLine + visibleLineCount;
+    if (drawLinesEnd > lineCount) {
+        drawLinesEnd = lineCount;
+    }
+
+    SetTextColor(deviceContext, textColor);
+    SetBkColor(deviceContext, backgroundColor);
+    
+    SIZE extent = { 0 };
+
+    size_t cursorColVisible = 0;
+    for (size_t i = topVisibleLine; i != drawLinesEnd; i++) {
+        size_t lineLength = MkLib_DynArray_Count(textBuffer[i]);
+
+        if (i != cursorRow || askExit) {
+            size_t start = 0;
+            while (start != lineLength && drawRect.left < drawRect.right) {
+                size_t end = MkLib_CwStringFindChar(textBuffer[i], lineLength, start, '\t');
+                if (end == SIZE_MAX) {
+                    end = lineLength;
+                }
+
+                GetTextExtentPoint32W(
+                    deviceContext,
+                    textBuffer[i] + start,
+                    end - start,
+                    &extent);
+                DrawTextExW(
+                    deviceContext,
+                    textBuffer[i] + start,
+                    end - start,
+                    &drawRect,
+                    DT_NOPREFIX,
+                    NULL);
+                drawRect.left += extent.cx;
+
+                if (end != lineLength) {
+                    drawRect.left += tabWidth * avgCharWidth;
+                    end++;
+                }
+
+                start = end;
+            }
+        } else {
+            size_t start = 0;
+            while (start != lineLength) {
+                size_t end = MkLib_CwStringFindChar(textBuffer[i], lineLength, start, '\t');
+                if (end == SIZE_MAX) {
+                    end = lineLength;
+                }
+
+                if (cursorCol < start) {
+                    if (drawRect.left >= drawRect.right) {
+                        break;
+                    }
+
+                    GetTextExtentPoint32W(
+                        deviceContext,
+                        textBuffer[i] + start,
+                        end - start,
+                        &extent);
+                    DrawTextExW(
+                        deviceContext,
+                        textBuffer[i] + start,
+                        end - start,
+                        &drawRect,
+                        DT_NOPREFIX,
+                        NULL);
+                    drawRect.left += extent.cx;
+
+                    if (end != lineLength) {
+                        drawRect.left += tabWidth * avgCharWidth;
+                        end++;
+                    }
+                } else if (cursorCol < end) {
+                    cursorColVisible += cursorCol - start;
+                    if (drawRect.left >= drawRect.right) {
+                        break;
+                    }
+
+                    GetTextExtentPoint32W(
+                        deviceContext,
+                        textBuffer[i] + start,
+                        cursorCol - start,
+                        &extent);
+                    DrawTextExW(
+                        deviceContext,
+                        textBuffer[i] + start,
+                        cursorCol - start,
+                        &drawRect,
+                        DT_NOPREFIX,
+                        NULL);
+                    drawRect.left += extent.cx;
+                    if (drawRect.left >= drawRect.right) {
+                        break;
+                    }
+
+                    SetBkColor(deviceContext, cursorBackgroundColor);
+                    GetTextExtentPoint32W(
+                        deviceContext,
+                        textBuffer[i] + cursorCol,
+                        1,
+                        &extent);
+                    DrawTextExW(
+                        deviceContext,
+                        textBuffer[i] + cursorCol,
+                        1,
+                        &drawRect,
+                        DT_NOPREFIX,
+                        NULL);
+                    drawRect.left += extent.cx;
+                    SetBkColor(deviceContext, backgroundColor);
+                    if (drawRect.left >= drawRect.right) {
+                        break;
+                    }
+
+                    GetTextExtentPoint32W(
+                        deviceContext,
+                        textBuffer[i] + (cursorCol + 1),
+                        end - (cursorCol + 1),
+                        &extent);
+                    DrawTextExW(
+                        deviceContext,
+                        textBuffer[i] + (cursorCol + 1),
+                        end - (cursorCol + 1),
+                        &drawRect,
+                        DT_NOPREFIX,
+                        NULL);
+                    drawRect.left += extent.cx;
+                    if (drawRect.left >= drawRect.right) {
+                        break;
+                    }
+
+                    if (end != lineLength) {
+                        drawRect.left += tabWidth * avgCharWidth;
+                        end++;
+                    }
+                } else {
+                    cursorColVisible += end - start;
+
+                    if (drawRect.left < drawRect.right) {
+                        GetTextExtentPoint32W(
+                            deviceContext,
+                            textBuffer[i] + start,
+                            end - start,
+                            &extent);
+                        DrawTextExW(
+                            deviceContext,
+                            textBuffer[i] + start,
+                            end - start,
+                            &drawRect,
+                            DT_NOPREFIX,
+                            NULL);
+                        drawRect.left += extent.cx;
+                    }
+
+                    if (end != lineLength) {
+                        if (end == cursorCol) {
+                            if (drawRect.left < drawRect.right) {
+                                RECT cursorRect = { 0 };
+                                cursorRect.left = drawRect.left;
+                                cursorRect.right = cursorRect.left + avgCharWidth;
+                                cursorRect.top = drawRect.top;
+                                cursorRect.bottom = cursorRect.top + lineHeight;
+                                FillRect(deviceContext, &cursorRect, cursorBrush);
+                            }
+                        } else {
+                            cursorColVisible += tabWidth;
+                        }
+
+                        drawRect.left += tabWidth * avgCharWidth;
+                        end++;
+                    }
+                }
+
+                start = end;
+            }
+
+            if (cursorCol == lineLength && drawRect.left < drawRect.right) {
+                RECT cursorRect = { 0 };
+                cursorRect.left = drawRect.left;
+                cursorRect.right = cursorRect.left + avgCharWidth;
+                cursorRect.top = drawRect.top;
+                cursorRect.bottom = cursorRect.top + lineHeight;
+                FillRect(deviceContext, &cursorRect, cursorBrush);
+            }
+        }
+
+        drawRect.left = 0;
+        drawRect.top += lineHeight;
+    }
+
+    drawRect.top = drawRect.bottom - lineHeight;
+    SetTextColor(deviceContext, statusTextColor);
+
+    if (askExit) {
+        FillRect(deviceContext, &drawRect, statusAlertBackgroundBrush);
+        SetBkColor(deviceContext, statusAlertBackgroundColor);
+
+        DrawTextExW(
+            deviceContext,
+            L"Quit? (Y/N)",
+            11,
+            &drawRect,
+            DT_NOPREFIX | DT_TABSTOP,
+            NULL);
+    } else {
+        FillRect(deviceContext, &drawRect, statusBackgroundBrush);
+        SetBkColor(deviceContext, statusBackgroundColor);
+
+        // u64 max = 20 chars
+        size_t cursorRowPercent = lineCount > 1 ? (100 * cursorRow) / (lineCount - 1) : 0;
+        wchar_t statusString[72];
+        size_t statusStringLength = swprintf(
+            statusString,
+            72,
+            L"Line: %zu (%zu %%)    Char: %zu",
+            cursorRow + 1,
+            cursorRowPercent,
+            cursorColVisible + 1);
+
+        DrawTextExW(
+            deviceContext,
+            statusString,
+            statusStringLength,
+            &drawRect,
+            DT_NOPREFIX,
+            NULL);
+    }
+}
 
 LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
@@ -73,15 +320,14 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                     }
                 }
             }
-            break;
+            return 0;
         }
 
         case WM_CHAR:
         {
             switch (wparam) {
-                case L'\n':
+                case L'\t':
                 {
-                    OutputDebugStringW(L"Line Feed\n");
                     break;
                 }
 
@@ -155,15 +401,19 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                         break;
                     }
 
+                    wchar_t letter = (wchar_t)wparam;
                     if (askExit) {
-                        wchar_t letter = (wchar_t)wparam;
                         if (letter == L'Y' || letter == L'y') {
                             DestroyWindow(window);
-                        } else if (letter == L'N' || letter == L'n') {
+                        } else if (letter == L'N' || letter == L'n' || letter == 27) {
                             askExit = 0;
                             InvalidateRect(window, NULL, 1);
                         }
                     } else {
+                        if (letter == 27) {
+                            break;
+                        }
+
                         MkLib_DynArray_Insert(&textBuffer[cursorRow], cursorCol, (wchar_t)wparam);
                         cursorCol++;
                         cursorColLast = cursorCol;
@@ -172,7 +422,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
                     break;
                 }
             }
-            break;
+            return 0;
         }
 
         case WM_KEYDOWN:
@@ -182,7 +432,26 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             }
 
             switch (wparam) {
-                
+                case VK_TAB:
+                {
+                    if (ctrlKeyDown) {
+                        break;
+                    }
+
+                    if (expandTabs) {
+                        for (int i = 0; i != tabWidth; i++) {
+                            MkLib_DynArray_Insert(&textBuffer[cursorRow], cursorCol, L' ');
+                            cursorCol++;
+                        }
+                    } else {
+                        MkLib_DynArray_Insert(&textBuffer[cursorRow], cursorCol, L'\t');
+                        cursorCol++;
+                    }
+                    cursorColLast = cursorCol;
+                    InvalidateRect(window, NULL, 1);
+                    break;
+                }
+
                 //-----------------
                 // Modifier Keys
                 case VK_CONTROL:
@@ -499,6 +768,7 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             TEXTMETRICW fontMetrics;
             GetTextMetricsW(deviceContext, &fontMetrics);
             lineHeight = fontMetrics.tmHeight;
+            avgCharWidth = fontMetrics.tmAveCharWidth;
 
             backgroundColor = RGB(255, 255, 255);
             textColor = RGB(0, 0, 0);
@@ -507,6 +777,16 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
             statusBackgroundColor = RGB(64, 80, 141);
             statusAlertBackgroundColor = RGB(162, 75, 64);
 
+            backgroundBrush = CreateSolidBrush(backgroundColor);
+            cursorBrush = CreateSolidBrush(cursorBackgroundColor);
+            statusBackgroundBrush = CreateSolidBrush(statusBackgroundColor);
+            statusAlertBackgroundBrush = CreateSolidBrush(statusAlertBackgroundColor);
+
+            return 0;
+        }
+
+        case WM_ERASEBKGND:
+        {
             return 0;
         }
 
@@ -514,123 +794,13 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
         {
             PAINTSTRUCT paintStruct;
             HDC deviceContext = BeginPaint(window, &paintStruct);
+            
+            RECT rect = { 0 };
+            rect.right = clientWidth;
+            rect.bottom = clientHeight;
+            FillRect(deviceContext, &rect, backgroundBrush);
 
-            RECT drawRect = { 0 };
-            drawRect.right = clientWidth;
-            drawRect.bottom = clientHeight;
-
-            HBRUSH backgroundBrush = CreateSolidBrush(backgroundColor);
-            FillRect(deviceContext, &drawRect, backgroundBrush);
-
-            SetTextColor(deviceContext, textColor);
-            SetBkColor(deviceContext, backgroundColor);
-
-            size_t bottomVisibleLine = topVisibleLine + visibleLineCount - 1;
-            size_t lineCount = MkLib_DynArray_Count(textBuffer);
-            for (size_t i = topVisibleLine; i <= bottomVisibleLine && i != lineCount; i++) {
-                size_t lineLength = MkLib_DynArray_Count(textBuffer[i]);
-
-                if (i == cursorRow && !askExit) {
-                    SIZE extent;
-                    GetTextExtentPoint32W(
-                        deviceContext,
-                        textBuffer[i],
-                        cursorCol,
-                        &extent);
-                    DrawTextExW(
-                        deviceContext,
-                        textBuffer[i],
-                        cursorCol,
-                        &drawRect,
-                        DT_NOPREFIX,
-                        NULL);
-                    drawRect.left += extent.cx;
-
-                    if (drawRect.left < drawRect.right) {
-                        SetBkColor(deviceContext, cursorBackgroundColor);
-                        if (cursorCol < lineLength) {
-                            GetTextExtentPoint32W(
-                                deviceContext,
-                                textBuffer[i] + cursorCol,
-                                1,
-                                &extent);
-                            DrawTextExW(
-                                deviceContext,
-                                textBuffer[i] + cursorCol,
-                                1,
-                                &drawRect,
-                                DT_NOPREFIX,
-                                NULL);
-                            drawRect.left += extent.cx;
-                            SetBkColor(deviceContext, backgroundColor);
-
-                            if (drawRect.left < drawRect.right) {
-                                DrawTextExW(
-                                    deviceContext,
-                                    textBuffer[i] + cursorCol + 1,
-                                    lineLength - (cursorCol + 1),
-                                    &drawRect,
-                                    DT_NOPREFIX,
-                                    NULL);
-                            }
-                        } else {
-                            DrawTextExW(
-                                deviceContext,
-                                L" ",
-                                1,
-                                &drawRect,
-                                DT_NOPREFIX,
-                                NULL);
-                            SetBkColor(deviceContext, backgroundColor);
-                        }
-                    }
-                    drawRect.left = 0;
-                } else {
-                    DrawTextExW(
-                        deviceContext,
-                        textBuffer[i],
-                        lineLength,
-                        &drawRect,
-                        DT_NOPREFIX,
-                        NULL);
-                }
-                drawRect.top += lineHeight;
-            }
-
-            drawRect.top = drawRect.bottom - lineHeight;
-            if (askExit) {
-                HBRUSH statusBackgroundBrush = CreateSolidBrush(statusAlertBackgroundColor);
-                FillRect(deviceContext, &drawRect, statusBackgroundBrush);
-
-                SetTextColor(deviceContext, statusTextColor);
-                SetBkColor(deviceContext, statusAlertBackgroundColor);
-                DrawTextExW(
-                    deviceContext,
-                    L"Quit? (Y/N)",
-                    11,
-                    &drawRect,
-                    DT_NOPREFIX,
-                    NULL);
-            } else {
-                // u64 max = 20 chars
-                size_t rowPercent = (100 * cursorRow) / (lineCount - 1);
-                wchar_t status[90];
-                size_t statusLength = swprintf(status, 90, L"Line: %zu (%zu %%)    Char: %zu", cursorRow, rowPercent, cursorCol);
-
-                HBRUSH statusBackgroundBrush = CreateSolidBrush(statusBackgroundColor);
-                FillRect(deviceContext, &drawRect, statusBackgroundBrush);
-
-                SetTextColor(deviceContext, statusTextColor);
-                SetBkColor(deviceContext, statusBackgroundColor);
-                DrawTextExW(
-                    deviceContext,
-                    status,
-                    statusLength,
-                    &drawRect,
-                    DT_NOPREFIX,
-                    NULL);
-            }
-
+            Draw(deviceContext);
             EndPaint(window, &paintStruct);
             return 0;
         }
@@ -658,35 +828,18 @@ LRESULT WindowProc(HWND window, unsigned int msg, WPARAM wparam, LPARAM lparam) 
 int WinMain(HINSTANCE instance, HINSTANCE prevInstance, char * commandLine, int showCommand) {
     heap = GetProcessHeap();
 
-    //---------------
-    // Test Setup
-    {
-        HANDLE testTextFile = CreateFileW(
-            L"..\\..\\MKlib\\MkString.c",
-            GENERIC_READ,
-            FILE_SHARE_READ,
-            NULL,
-            OPEN_EXISTING,
-            0,
-            NULL);
+    textBuffer = MkLib_DynArray_Create(wchar_t *, 128, 128);
 
-        LARGE_INTEGER fileSize;
-        GetFileSizeEx(testTextFile, &fileSize);
+    wchar_t testLine[] = L"\tputs(\"Hello world!\\n\");";
+    wchar_t * line = MkLib_DynArray_Create(wchar_t, 32, 8);
+    MemCopy(line, testLine, 24 * sizeof(wchar_t));
+    MkLib_DynArray_SetCount(&line, 24);
+    MkLib_DynArray_Push(&textBuffer, line);
 
-        byte * utf8 = MemAlloc(fileSize.u.LowPart);
-        unsigned long bytesRead;
-        ReadFile(
-            testTextFile,
-            utf8,
-            fileSize.u.LowPart,
-            &bytesRead,
-            NULL);
+    line = MkLib_DynArray_Create(wchar_t, 8, 8);
+    MkLib_DynArray_Push(&textBuffer, line);
 
-        CloseHandle(testTextFile);
-
-        textBuffer = MkLib_CwDynArrayLinesFromUtf8(utf8, fileSize.u.LowPart);
-        MemFree(utf8);
-    }
+    cursorRow = 1;
 
     //---------------
     // Window Setup

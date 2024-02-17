@@ -99,7 +99,7 @@ void TrySaveFile() {
     TextRow * rowPtr = &textBuffer[0];
     byte output[4];
     ushort outputCount;
-    wchar_t c;
+    ulong c;
     ulong currentCount;
 
     byte newline[] = { 0x0d, 0x0a };
@@ -181,7 +181,7 @@ void TrySaveFile() {
 void AppendChar(TextRow * rowPtr, wchar_t c) {
     if (rowPtr->length == rowPtr->capacity) {
         rowPtr->capacity *= 2;
-        rowPtr->text = realloc(rowPtr->text, rowPtr->capacity);
+        rowPtr->text = realloc(rowPtr->text, rowPtr->capacity * sizeof(wchar_t));
     }
     rowPtr->text[rowPtr->length++] = c;
 }
@@ -428,8 +428,10 @@ wchar_t * wcschr_s(wchar_t * wcs, ushort length, wchar_t c) {
     return NULL;
 }
 
+HDC bitmapDeviceContext;
+ushort bitmapWidth, bitmapHeight;
+
 void PaintCursorRow(
-    HDC deviceContext,
     RECT * textRectPtr,
     wchar_t * text,
     ushort length,
@@ -445,12 +447,12 @@ void PaintCursorRow(
         ushort nextTabOffset = nextTabPos - currentText;
         if (cursorOffset < 0 || cursorOffset >= nextTabOffset) {
             GetTextExtentPoint32W(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText,
                 nextTabOffset,
                 &extent);
             DrawTextExW(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText,
                 nextTabOffset,
                 textRectPtr,
@@ -464,19 +466,19 @@ void PaintCursorRow(
             if (cursorOffset == nextTabOffset) {
                 RECT cursorRect;
                 cursorRect.left = textRectPtr->left;
-                cursorRect.right = textRectPtr->left + avgCharWidth;
                 cursorRect.top = textRectPtr->top;
+                cursorRect.right = textRectPtr->left + avgCharWidth;
                 cursorRect.bottom = textRectPtr->top + lineHeight;
-                FillRect(deviceContext, &cursorRect, cursorBackgroundBrush);
+                FillRect(bitmapDeviceContext, &cursorRect, cursorBackgroundBrush);
             }
 
             GetTextExtentPoint32W(
-                deviceContext,
+                bitmapDeviceContext,
                 tabSpaces,
                 tabWidth,
                 &extent);
             DrawTextExW(
-                deviceContext,
+                bitmapDeviceContext,
                 tabSpaces,
                 tabWidth,
                 textRectPtr,
@@ -488,12 +490,12 @@ void PaintCursorRow(
             }
         } else {
             GetTextExtentPoint32W(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText,
                 cursorOffset,
                 &extent);
             DrawTextExW(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText,
                 cursorOffset,
                 textRectPtr,
@@ -505,24 +507,24 @@ void PaintCursorRow(
             }
 
             GetTextExtentPoint32W(
-                deviceContext,
+                bitmapDeviceContext,
                 &currentText[cursorOffset],
                 1,
                 &extent);
             RECT cursorRect;
             cursorRect.left = textRectPtr->left;
-            cursorRect.right = textRectPtr->left + extent.cx;
             cursorRect.top = textRectPtr->top;
+            cursorRect.right = textRectPtr->left + extent.cx;
             cursorRect.bottom = textRectPtr->top + lineHeight;
-            FillRect(deviceContext, &cursorRect, cursorBackgroundBrush);
+            FillRect(bitmapDeviceContext, &cursorRect, cursorBackgroundBrush);
 
             GetTextExtentPoint32W(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText + cursorOffset,
                 nextTabOffset - cursorOffset,
                 &extent);
             DrawTextExW(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText + cursorOffset,
                 nextTabOffset - cursorOffset,
                 textRectPtr,
@@ -534,12 +536,12 @@ void PaintCursorRow(
             }
 
             GetTextExtentPoint32W(
-                deviceContext,
+                bitmapDeviceContext,
                 tabSpaces,
                 tabWidth,
                 &extent);
             DrawTextExW(
-                deviceContext,
+                bitmapDeviceContext,
                 tabSpaces,
                 tabWidth,
                 textRectPtr,
@@ -561,12 +563,12 @@ void PaintCursorRow(
     if (!nextTabPos) {
         if (cursorOffset == currentLength) {
             GetTextExtentPoint32W(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText,
                 currentLength,
                 &extent);
             DrawTextExW(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText,
                 currentLength,
                 textRectPtr,
@@ -576,22 +578,19 @@ void PaintCursorRow(
             if (textRectPtr->left < textRectPtr->right) {
                 RECT cursorRect;
                 cursorRect.left = textRectPtr->left;
-                cursorRect.right = textRectPtr->left + avgCharWidth;
                 cursorRect.top = textRectPtr->top;
+                cursorRect.right = textRectPtr->left + avgCharWidth;
                 cursorRect.bottom = textRectPtr->top + lineHeight;
-                FillRect(
-                    deviceContext,
-                    &cursorRect,
-                    cursorBackgroundBrush);
+                FillRect(bitmapDeviceContext, &cursorRect, cursorBackgroundBrush);
             }
         } else if (cursorOffset >= 0) {
             GetTextExtentPoint32W(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText,
                 cursorOffset,
                 &extent);
             DrawTextExW(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText,
                 cursorOffset,
                 textRectPtr,
@@ -600,22 +599,22 @@ void PaintCursorRow(
             textRectPtr->left += extent.cx;
             if (textRectPtr->left < textRectPtr->right) {
                 GetTextExtentPoint32W(
-                    deviceContext,
+                    bitmapDeviceContext,
                     currentText + cursorOffset,
                     1,
                     &extent);
                 RECT cursorRect;
                 cursorRect.left = textRectPtr->left;
-                cursorRect.right = textRectPtr->left + extent.cx;
                 cursorRect.top = textRectPtr->top;
+                cursorRect.right = textRectPtr->left + extent.cx;
                 cursorRect.bottom = textRectPtr->top + lineHeight;
                 FillRect(
-                    deviceContext,
+                    bitmapDeviceContext,
                     &cursorRect,
                     cursorBackgroundBrush);
 
                 DrawTextExW(
-                    deviceContext,
+                    bitmapDeviceContext,
                     currentText + cursorOffset,
                     currentLength - cursorOffset,
                     textRectPtr,
@@ -624,7 +623,7 @@ void PaintCursorRow(
             }
         } else {
             DrawTextExW(
-                deviceContext,
+                bitmapDeviceContext,
                 currentText,
                 currentLength,
                 textRectPtr,
@@ -634,26 +633,272 @@ void PaintCursorRow(
     }
 }
 
-LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
-    switch (message) {
-        case WM_PAINT:
-        {
-            RECT clientRect;
+void Paint() {
+    if (bitmapWidth == 0 || bitmapHeight == 0) {
+        lastDrawRowCount = 0;
+        return;
+    }
 
-            GetClientRect(window, &clientRect);
-            long clientWidth = clientRect.right - clientRect.left;
-            long clientHeight = clientRect.bottom - clientRect.top;
-            if (clientHeight <= 0 || clientWidth <= 0) {
-                lastDrawRowCount = 0;
-                return 0;
+    RECT clientRect;
+    clientRect.left = 0;
+    clientRect.top = 0;
+    clientRect.right = bitmapWidth;
+    clientRect.bottom = bitmapHeight;
+
+    FillRect(bitmapDeviceContext, &clientRect, backgroundBrush);
+
+    SetTextColor(bitmapDeviceContext, textColor);
+    SetBkMode(bitmapDeviceContext, TRANSPARENT);
+
+    ulong drawRowCount = bitmapHeight / lineHeight;
+    if (drawRowCount == 0) {
+        lastDrawRowCount = 0;
+        return;
+    }
+    drawRowCount--;
+
+    if (drawRowCount != 0) {
+        wchar_t workingFolderPathLine[MAX_PATH + 32];
+        swprintf_s(workingFolderPathLine, MAX_PATH + 32, L"Working Folder: %s", workingFolderPath);
+
+        RECT workingFolderRect;
+        workingFolderRect.left = clientRect.left;
+        workingFolderRect.top = clientRect.top;
+        workingFolderRect.right = clientRect.right;
+        workingFolderRect.bottom = clientRect.top + lineHeight;
+
+        DrawTextExW(
+            bitmapDeviceContext,
+            workingFolderPathLine,
+            -1,
+            &workingFolderRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            NULL);
+
+        drawRowCount--;
+    }
+
+    if (drawRowCount != 0) {
+        RECT fileRect;
+        fileRect.left = clientRect.left;
+        fileRect.top = clientRect.top + lineHeight;
+        fileRect.right = clientRect.right;
+        fileRect.bottom = fileRect.top + lineHeight;
+        FillRect(bitmapDeviceContext, &fileRect, fileBackgroundBrush);
+
+        wchar_t filePathLine[MAX_PATH + 32];
+        if (filePath[0] == L'\0') {
+            if (modified) {
+                wcscpy_s(filePathLine, MAX_PATH + 32, L"<UNNAMED> (modified)");
+            } else {
+                wcscpy_s(filePathLine, MAX_PATH + 32, L"<UNNAMED>");
+            }
+        } else {
+            if (modified) {
+                swprintf_s(filePathLine, MAX_PATH + 32, L"%s (modified)", filePath);
+            } else {
+                wcscpy_s(filePathLine, MAX_PATH + 32, filePath);
+            }
+        }
+        DrawTextExW(
+            bitmapDeviceContext,
+            filePathLine,
+            -1,
+            &fileRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            NULL);
+
+        drawRowCount--;
+    }
+
+    RECT textRect;
+    textRect.left = clientRect.left;
+    textRect.top = clientRect.top + 2 * lineHeight;
+    textRect.right = clientRect.right;
+    textRect.bottom = clientRect.bottom - lineHeight;
+
+    if (cursorRowIndex < topDrawRowIndex) {
+        topDrawRowIndex = cursorRowIndex;
+    }
+    ulong bottomDrawRowIndex = topDrawRowIndex + drawRowCount;
+    if (cursorRowIndex >= bottomDrawRowIndex) {
+        topDrawRowIndex += cursorRowIndex - bottomDrawRowIndex + 1;
+        bottomDrawRowIndex = cursorRowIndex + 1;
+    } else if (topDrawRowIndex != 0 && bottomDrawRowIndex > textBufferCount) {
+        ulong diff = bottomDrawRowIndex - textBufferCount;
+        if (diff > topDrawRowIndex) {
+            topDrawRowIndex = 0;
+        } else {
+            topDrawRowIndex -= diff;
+        }
+    }
+
+    for (ulong i = topDrawRowIndex; i != textBufferCount; i++) {
+        if (textRect.bottom - textRect.top < lineHeight) {
+            break;
+        }
+
+        TextRow * rowPtr = &textBuffer[i];
+        if (i == cursorRowIndex && currentMode == MODE_INSERT) {
+            PaintCursorRow(&textRect, rowPtr->text, rowPtr->length, cursorColIndex);
+        } else {
+            wchar_t * currentText = rowPtr->text;
+            ushort currentLength = rowPtr->length;
+            wchar_t * nextTabPos = wcschr_s(currentText, currentLength, L'\t');
+            while (nextTabPos) {
+                SIZE extent;
+                ushort nextTabOffset = nextTabPos - currentText;
+
+                GetTextExtentPoint32W(
+                    bitmapDeviceContext,
+                    currentText,
+                    nextTabOffset,
+                    &extent);
+                DrawTextExW(
+                    bitmapDeviceContext,
+                    currentText,
+                    nextTabOffset,
+                    &textRect,
+                    DT_NOCLIP | DT_NOPREFIX,
+                    NULL);
+                textRect.left += extent.cx;
+                if (textRect.left >= textRect.right) {
+                    break;
+                }
+
+                GetTextExtentPoint32W(
+                    bitmapDeviceContext,
+                    tabSpaces,
+                    tabWidth,
+                    &extent);
+                DrawTextExW(
+                    bitmapDeviceContext,
+                    tabSpaces,
+                    tabWidth,
+                    &textRect,
+                    DT_NOCLIP | DT_NOPREFIX,
+                    NULL);
+                textRect.left += extent.cx;
+                if (textRect.left >= textRect.right) {
+                    break;
+                }
+
+                nextTabOffset++;
+                currentText = nextTabPos + 1;
+                currentLength -= nextTabOffset;
+                nextTabPos = wcschr_s(currentText, currentLength, L'\t');
             }
 
-            PAINTSTRUCT paintStruct;
-            HDC deviceContext = BeginPaint(window, &paintStruct);
-            FillRect(deviceContext, &clientRect, backgroundBrush);
+            if (!nextTabPos) {
+                DrawTextExW(
+                    bitmapDeviceContext,
+                    currentText,
+                    currentLength,
+                    &textRect,
+                    DT_NOCLIP | DT_NOPREFIX,
+                    NULL);
+            }
+        }
 
-            if (!fontSet) {
-                int ppi = GetDeviceCaps(deviceContext, LOGPIXELSY);
+        textRect.left = 0;
+        textRect.top += lineHeight;
+        lastDrawRowCount++;
+    }
+
+    RECT statusRect;
+    statusRect.left = clientRect.left;
+    statusRect.top = clientRect.bottom - lineHeight;
+    statusRect.right = clientRect.right;
+    statusRect.bottom = clientRect.bottom;
+    if (paintStatusMessage) {
+        FillRect(bitmapDeviceContext, &statusRect, promptBackgroundBrush);
+        SetTextColor(bitmapDeviceContext, promptTextColor);
+        DrawTextExW(
+            bitmapDeviceContext,
+            statusInput,
+            -1,
+            &statusRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            NULL);
+    } else if (currentMode == MODE_INSERT) {
+        FillRect(bitmapDeviceContext, &statusRect, statusBackgroundBrush);
+
+        ulong rowPercent;
+        if (textBufferCount > 1) {
+            rowPercent = (100 * cursorRowIndex) / (textBufferCount - 1);
+        } else {
+            rowPercent = 0;
+        }
+
+        TextRow * cursorRowPtr = &textBuffer[cursorRowIndex];
+        ulong cursorColDrawIndex = 0;
+        for (ushort i = 0; i != cursorColIndex; i++) {
+            if (cursorRowPtr->text[i] == L'\t') {
+                cursorColDrawIndex += tabWidth;
+            } else {
+                cursorColDrawIndex++;
+            }
+        }
+        ulong cursorRowDrawLength = 0;
+        for (ushort i = 0; i != cursorRowPtr->length; i++) {
+            if (cursorRowPtr->text[i] == L'\t') {
+                cursorRowDrawLength += tabWidth;
+            } else {
+                cursorRowDrawLength++;
+            }
+        }
+
+        wchar_t statusLine[128];
+        swprintf_s(
+            statusLine,
+            128,
+            L"Row: %lu/%lu (%lu %%)    Col: %hu/%hu (%lu/%lu)",
+            cursorRowIndex + 1,
+            textBufferCount,
+            rowPercent,
+            cursorColIndex + 1,
+            cursorRowPtr->length,
+            cursorColDrawIndex + 1,
+            cursorRowDrawLength);
+
+        DrawTextExW(
+            bitmapDeviceContext,
+            statusLine,
+            -1,
+            &statusRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            NULL);
+    } else if (currentMode == MODE_OPEN_FILE) {
+        FillRect(bitmapDeviceContext, &statusRect, promptBackgroundBrush);
+        SetTextColor(bitmapDeviceContext, promptTextColor);
+
+        wchar_t statusLine[2 * MAX_PATH + 32] = L"Open: ";
+        ushort prefixOffset = wcslen(statusLine);
+        wcsncpy_s(statusLine + prefixOffset, 2 * MAX_PATH, statusInput, statusInputLength);
+        ushort actualCursorCol = statusCursorCol + prefixOffset;
+        PaintCursorRow(&statusRect, statusLine, wcslen(statusLine), actualCursorCol);
+    } else if (currentMode == MODE_SAVE_FILE) {
+        FillRect(bitmapDeviceContext, &statusRect, promptBackgroundBrush);
+        SetTextColor(bitmapDeviceContext, promptTextColor);
+
+        wchar_t statusLine[2 * MAX_PATH + 32] = L"Save: ";
+        ushort prefixOffset = wcslen(statusLine);
+        wcsncpy_s(statusLine + prefixOffset, 2 * MAX_PATH, statusInput, statusInputLength);
+        ushort actualCursorCol = statusCursorCol + prefixOffset;
+        PaintCursorRow(&statusRect, statusLine, wcslen(statusLine), actualCursorCol);
+    }
+}
+
+LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+        case WM_SIZE:
+        {
+            HDC deviceContext = GetDC(window);
+
+            if (!bitmapDeviceContext) {
+                bitmapDeviceContext = CreateCompatibleDC(deviceContext);
+
+                int ppi = GetDeviceCaps(bitmapDeviceContext, LOGPIXELSY);
                 int lfHeight = 0 - ((fontSize * ppi) / 72);
                 HFONT font = CreateFontW(
                     lfHeight,
@@ -670,262 +915,48 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     DEFAULT_QUALITY,
                     DEFAULT_PITCH | FF_DONTCARE,
                     fontName);
-                HFONT oldFont = SelectObject(deviceContext, font);
+                HFONT oldFont = SelectObject(bitmapDeviceContext, font);
                 if (oldFont) {
                     DeleteObject(oldFont);
                 }
 
                 TEXTMETRICW fontMetrics;
-                GetTextMetricsW(deviceContext, &fontMetrics);
+                GetTextMetricsW(bitmapDeviceContext, &fontMetrics);
                 lineHeight = fontMetrics.tmHeight;
                 avgCharWidth = fontMetrics.tmAveCharWidth;
-
-                fontSet = TRUE;
             }
 
-            SetTextColor(deviceContext, textColor);
-            SetBkMode(deviceContext, TRANSPARENT);
-
-            ulong drawRowCount = clientHeight / lineHeight;
-            if (drawRowCount == 0) {
-                FillRect(deviceContext, &clientRect, backgroundBrush);
-                EndPaint(window, &paintStruct);
-
-                lastDrawRowCount = 0;
-                return 0;
-            }
-            drawRowCount--;
-
-            if (drawRowCount != 0) {
-                wchar_t workingFolderPathLine[MAX_PATH + 32];
-                swprintf_s(workingFolderPathLine, MAX_PATH + 32, L"Working Folder: %s", workingFolderPath);
-
-                RECT workingFolderRect;
-                workingFolderRect.left = clientRect.left;
-                workingFolderRect.right = clientRect.right;
-                workingFolderRect.top = clientRect.top;
-                workingFolderRect.bottom = clientRect.top + lineHeight;
-
-                DrawTextExW(
-                    deviceContext,
-                    workingFolderPathLine,
-                    -1,
-                    &workingFolderRect,
-                    DT_NOCLIP | DT_NOPREFIX,
-                    NULL);
-
-                drawRowCount--;
+            bitmapWidth = LOWORD(lparam);
+            bitmapHeight = HIWORD(lparam);
+            HBITMAP bitmap = CreateCompatibleBitmap(deviceContext, bitmapWidth, bitmapHeight);
+            HBITMAP oldBitmap = SelectObject(bitmapDeviceContext, bitmap);
+            if (oldBitmap) {
+                DeleteObject(oldBitmap);
             }
 
-            if (drawRowCount != 0) {
-                RECT fileRect;
-                fileRect.left = clientRect.left;
-                fileRect.right = clientRect.right;
-                fileRect.top = clientRect.top + lineHeight;
-                fileRect.bottom = fileRect.top + lineHeight;
-                FillRect(deviceContext, &fileRect, fileBackgroundBrush);
+            Paint();
+            return 0;
+        }
 
-                wchar_t filePathLine[MAX_PATH + 32];
-                if (filePath[0] == L'\0') {
-                    if (modified) {
-                        wcscpy_s(filePathLine, MAX_PATH + 32, L"<UNNAMED> (modified)");
-                    } else {
-                        wcscpy_s(filePathLine, MAX_PATH + 32, L"<UNNAMED>");
-                    }
-                } else {
-                    if (modified) {
-                        swprintf_s(filePathLine, MAX_PATH + 32, L"%s (modified)", filePath);
-                    } else {
-                        wcscpy_s(filePathLine, MAX_PATH + 32, filePath);
-                    }
-                }
-                DrawTextExW(
-                    deviceContext,
-                    filePathLine,
-                    -1,
-                    &fileRect,
-                    DT_NOCLIP | DT_NOPREFIX,
-                    NULL);
+        case WM_PAINT:
+        {
+            PAINTSTRUCT paintStruct;
+            HDC deviceContext = BeginPaint(window, &paintStruct);
+            long x = paintStruct.rcPaint.left;
+            long y = paintStruct.rcPaint.top;
+            long width = paintStruct.rcPaint.right - paintStruct.rcPaint.left;
+            long height = paintStruct.rcPaint.bottom - paintStruct.rcPaint.top;
 
-                drawRowCount--;
-            }
-
-            RECT textRect;
-            textRect.left = clientRect.left;
-            textRect.right = clientRect.right;
-            textRect.top = clientRect.top + 2 * lineHeight;
-            textRect.bottom = clientRect.bottom - lineHeight;
-
-            if (cursorRowIndex < topDrawRowIndex) {
-                topDrawRowIndex = cursorRowIndex;
-            }
-            ulong bottomDrawRowIndex = topDrawRowIndex + drawRowCount;
-            if (cursorRowIndex >= bottomDrawRowIndex) {
-                topDrawRowIndex += cursorRowIndex - bottomDrawRowIndex + 1;
-                bottomDrawRowIndex = cursorRowIndex + 1;
-            } else if (topDrawRowIndex != 0 && bottomDrawRowIndex > textBufferCount) {
-                ulong diff = bottomDrawRowIndex - textBufferCount;
-                if (diff > topDrawRowIndex) {
-                    topDrawRowIndex = 0;
-                } else {
-                    topDrawRowIndex -= diff;
-                }
-            }
-
-            for (ulong i = topDrawRowIndex; i != textBufferCount; i++) {
-                if (textRect.bottom - textRect.top < lineHeight) {
-                    break;
-                }
-
-                TextRow * rowPtr = &textBuffer[i];
-                if (i == cursorRowIndex && currentMode == MODE_INSERT) {
-                    PaintCursorRow(deviceContext, &textRect, rowPtr->text, rowPtr->length, cursorColIndex);
-                } else {
-                    wchar_t * currentText = rowPtr->text;
-                    ushort currentLength = rowPtr->length;
-                    wchar_t * nextTabPos = wcschr_s(currentText, currentLength, L'\t');
-                    while (nextTabPos) {
-                        SIZE extent;
-                        ushort nextTabOffset = nextTabPos - currentText;
-
-                        GetTextExtentPoint32W(
-                            deviceContext,
-                            currentText,
-                            nextTabOffset,
-                            &extent);
-                        DrawTextExW(
-                            deviceContext,
-                            currentText,
-                            nextTabOffset,
-                            &textRect,
-                            DT_NOCLIP | DT_NOPREFIX,
-                            NULL);
-                        textRect.left += extent.cx;
-                        if (textRect.left >= textRect.right) {
-                            break;
-                        }
-
-                        GetTextExtentPoint32W(
-                            deviceContext,
-                            tabSpaces,
-                            tabWidth,
-                            &extent);
-                        DrawTextExW(
-                            deviceContext,
-                            tabSpaces,
-                            tabWidth,
-                            &textRect,
-                            DT_NOCLIP | DT_NOPREFIX,
-                            NULL);
-                        textRect.left += extent.cx;
-                        if (textRect.left >= textRect.right) {
-                            break;
-                        }
-
-                        nextTabOffset++;
-                        currentText = nextTabPos + 1;
-                        currentLength -= nextTabOffset;
-                        nextTabPos = wcschr_s(currentText, currentLength, L'\t');
-                    }
-
-                    if (!nextTabPos) {
-                        DrawTextExW(
-                            deviceContext,
-                            currentText,
-                            currentLength,
-                            &textRect,
-                            DT_NOCLIP | DT_NOPREFIX,
-                            NULL);
-                    }
-                }
-
-                textRect.left = 0;
-                textRect.top += lineHeight;
-                lastDrawRowCount++;
-            }
-
-            RECT statusRect;
-            statusRect.left = clientRect.left;
-            statusRect.right = clientRect.right;
-            statusRect.top = clientRect.bottom - lineHeight;
-            statusRect.bottom = clientRect.bottom;
-            if (paintStatusMessage) {
-                FillRect(deviceContext, &statusRect, promptBackgroundBrush);
-                SetTextColor(deviceContext, promptTextColor);
-                DrawTextExW(
-                    deviceContext,
-                    statusInput,
-                    -1,
-                    &statusRect,
-                    DT_NOCLIP | DT_NOPREFIX,
-                    NULL);
-            } else if (currentMode == MODE_INSERT) {
-                FillRect(deviceContext, &statusRect, statusBackgroundBrush);
-
-                ulong rowPercent;
-                if (textBufferCount > 1) {
-                    rowPercent = (100 * cursorRowIndex) / (textBufferCount - 1);
-                } else {
-                    rowPercent = 0;
-                }
-
-                TextRow * cursorRowPtr = &textBuffer[cursorRowIndex];
-                ulong cursorColDrawIndex = 0;
-                for (ushort i = 0; i != cursorColIndex; i++) {
-                    if (cursorRowPtr->text[i] == L'\t') {
-                        cursorColDrawIndex += tabWidth;
-                    } else {
-                        cursorColDrawIndex++;
-                    }
-                }
-                ulong cursorRowDrawLength = 0;
-                for (ushort i = 0; i != cursorRowPtr->length; i++) {
-                    if (cursorRowPtr->text[i] == L'\t') {
-                        cursorRowDrawLength += tabWidth;
-                    } else {
-                        cursorRowDrawLength++;
-                    }
-                }
-
-                wchar_t statusLine[128];
-                swprintf_s(
-                    statusLine,
-                    128,
-                    L"Row: %lu/%lu (%lu %%)    Col: %hu/%hu (%lu/%lu)",
-                    cursorRowIndex + 1,
-                    textBufferCount,
-                    rowPercent,
-                    cursorColIndex + 1,
-                    cursorRowPtr->length,
-                    cursorColDrawIndex + 1,
-                    cursorRowDrawLength);
-
-                DrawTextExW(
-                    deviceContext,
-                    statusLine,
-                    -1,
-                    &statusRect,
-                    DT_NOCLIP | DT_NOPREFIX,
-                    NULL);
-            } else if (currentMode == MODE_OPEN_FILE) {
-                FillRect(deviceContext, &statusRect, promptBackgroundBrush);
-                SetTextColor(deviceContext, promptTextColor);
-
-                wchar_t statusLine[2 * MAX_PATH + 32] = L"Open: ";
-                ushort prefixOffset = wcslen(statusLine);
-                wcsncpy_s(statusLine + prefixOffset, 2 * MAX_PATH, statusInput, statusInputLength);
-                ushort actualCursorCol = statusCursorCol + prefixOffset;
-                PaintCursorRow(deviceContext, &statusRect, statusLine, wcslen(statusLine), actualCursorCol);
-            } else if (currentMode == MODE_SAVE_FILE) {
-                FillRect(deviceContext, &statusRect, promptBackgroundBrush);
-                SetTextColor(deviceContext, promptTextColor);
-
-                wchar_t statusLine[2 * MAX_PATH + 32] = L"Save: ";
-                ushort prefixOffset = wcslen(statusLine);
-                wcsncpy_s(statusLine + prefixOffset, 2 * MAX_PATH, statusInput, statusInputLength);
-                ushort actualCursorCol = statusCursorCol + prefixOffset;
-                PaintCursorRow(deviceContext, &statusRect, statusLine, wcslen(statusLine), actualCursorCol);
-            }
+            bool result = BitBlt(
+                deviceContext,
+                x,
+                y,
+                width,
+                height,
+                bitmapDeviceContext,
+                0,
+                0,
+                SRCCOPY);
 
             EndPaint(window, &paintStruct);
             return 0;
@@ -938,7 +969,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 {
                     currentMode = MODE_INSERT;
                     paintStatusMessage = FALSE;
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
 
@@ -960,7 +992,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                             statusCursorCol--;
                         }
                     }
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
 
@@ -982,7 +1015,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                             statusCursorCol++;
                         }
                     }
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
 
@@ -997,7 +1031,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                         ApplyColDrawIndex();
                     }
                     paintStatusMessage = FALSE;
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
 
@@ -1012,7 +1047,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                         ApplyColDrawIndex();
                     }
                     paintStatusMessage = FALSE;
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
 
@@ -1028,7 +1064,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     } else {
                         statusCursorCol = 0;
                     }
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
 
@@ -1044,7 +1081,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     } else {
                         statusCursorCol = statusInputLength - 1;
                     }
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
 
@@ -1067,7 +1105,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     }
                     ApplyColDrawIndex();
                     paintStatusMessage = FALSE;
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
 
@@ -1086,7 +1125,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     }
                     ApplyColDrawIndex();
                     paintStatusMessage = FALSE;
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
 
@@ -1134,7 +1174,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                             statusInputLength--;
                         }
                     }
-                    InvalidateRect(window, NULL, TRUE);
+                    Paint();
+                    InvalidateRect(window, NULL, FALSE);
                     break;
                 }
             }
@@ -1307,7 +1348,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 }
             }
 
-            InvalidateRect(window, NULL, TRUE);
+            Paint();
+            InvalidateRect(window, NULL, FALSE);
             return 0;
         }
 

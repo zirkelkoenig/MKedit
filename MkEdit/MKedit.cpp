@@ -1,10 +1,15 @@
 #include <Windows.h>
 
+#include <KnownFolders.h>
+#include <objbase.h>
+#include <ShlObj.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <wctype.h>
 
-typedef int bool;
+#include "Generated/ConfigGen.h"
+
 typedef unsigned char byte;
 typedef unsigned short ushort;
 typedef unsigned long ulong;
@@ -12,69 +17,377 @@ typedef unsigned long ulong;
 const ulong maxRows = ULONG_MAX;
 const ushort maxRowLength = USHRT_MAX;
 
-const ulong textColor = RGB(220, 220, 220);
-const ulong backgroundColor = RGB(30, 30, 30);
-const ulong cursorBackgroundColor = RGB(125, 125, 125);
-const ulong statusBackgroundColor = RGB(46, 46, 46);
-const ulong fileBackgroundColor = RGB(61, 61, 61);
-const ulong promptTextColor = RGB(255, 255, 255);
-const ulong promptBackgroundColor = RGB(134, 27, 45);
+Config config;
 
-const int fontSize = 10;
-const wchar_t fontName[] = L"Consolas";
+//---------------------
+// RUNTIME CONSTANTS
+
+HBRUSH textBrush;
+HBRUSH backgroundBrush;
+HBRUSH cursorBrush;
+HBRUSH statusBackgroundBrush;
+HBRUSH docTitleBackgroundBrush;
+HBRUSH promptTextBrush;
+HBRUSH promptBackgroundBrush;
+
+wchar_t * tabSpaces;
+
+//--------------------------
+// BASIC DATA STRUCTURES
 
 #define INIT_ROW_CAPACITY 4
 #define TEXTBUFFER_GROW_COUNT 16
 
-HBRUSH textBrush;
-HBRUSH backgroundBrush;
-HBRUSH cursorBackgroundBrush;
-HBRUSH statusBackgroundBrush;
-HBRUSH fileBackgroundBrush;
-HBRUSH promptTextBrush;
-HBRUSH promptBackgroundBrush;
+struct DocLine {
+    ushort length;
+    ushort capacity;
+    wchar_t * text;
+};
 
-unsigned tabWidth = 4;
-bool expandTabs = TRUE;
-wchar_t * tabSpaces = L"        ";
+struct DocLines {
+    ulong textBufferCount;
+    ulong textBufferCapacity;
+    DocLine * textBuffer;
+};
+
+struct Doc {
+    DocLines lines;
+    ulong cursorRowIndex;
+    ushort cursorColIndex;
+    ulong cursorColLastDrawIndex;
+    ulong topDrawRowIndex;
+    ulong lastDrawRowCount;
+    bool modified;
+};
+
+Doc * CreateEmptyDoc() {
+    Doc * docPtr = (Doc *)malloc(sizeof(Doc));
+    memset(docPtr, 0, sizeof(Doc));
+
+    docPtr->lines.textBufferCount = 1;
+    docPtr->lines.textBufferCapacity = TEXTBUFFER_GROW_COUNT;
+    docPtr->lines.textBuffer = (DocLine *)malloc(TEXTBUFFER_GROW_COUNT * sizeof(DocLine));
+
+    DocLine * linePtr = &docPtr->lines.textBuffer[0];
+    linePtr->length = 0;
+    linePtr->capacity = INIT_ROW_CAPACITY;
+    linePtr->text = (wchar_t *)malloc(INIT_ROW_CAPACITY * sizeof(wchar_t));
+
+    return docPtr;
+}
+
+void DestroyDoc(Doc * docPtr) {
+    for (ulong i = 0; i != docPtr->lines.textBufferCount; i++) {
+        free(docPtr->lines.textBuffer[i].text);
+    }
+    free(docPtr->lines.textBuffer);
+    free(docPtr);
+}
+
+Doc * onlyDoc;
 
 bool fontSet;
 long lineHeight;
 long avgCharWidth;
 
-typedef struct TextRow {
-    ushort length;
-    ushort capacity;
-    wchar_t * text;
-} TextRow;
+enum VimMode {
+    MODE_VIM_NORMAL,
+    MODE_VIM_INSERT,
+};
 
-ulong textBufferCount;
-ulong textBufferCapacity;
-TextRow * textBuffer;
+VimMode currentVimMode = MODE_VIM_NORMAL;
 
-ulong cursorRowIndex;
-ushort cursorColIndex;
-ulong cursorColLastDrawIndex;
+bool paintStatusMessage;
 
-ulong topDrawRowIndex;
-ulong lastDrawRowCount;
+void UpdateColDrawIndex(Doc * doc) {
+    wchar_t * text = doc->lines.textBuffer[doc->cursorRowIndex].text;
+    doc->cursorColLastDrawIndex = 0;
+    for (ushort i = 0; i != doc->cursorColIndex; i++) {
+        if (text[i] == L'\t') {
+            doc->cursorColLastDrawIndex += config.tabWidth;
+        } else {
+            doc->cursorColLastDrawIndex++;
+        }
+    }
+}
 
-typedef enum Mode {
+void ApplyColDrawIndex(Doc * doc) {
+    DocLine * rowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
+    ulong cursorColDrawIndex = 0;
+    for (doc->cursorColIndex = 0; doc->cursorColIndex != rowPtr->length; doc->cursorColIndex++) {
+        if (cursorColDrawIndex >= doc->cursorColLastDrawIndex) {
+            if (cursorColDrawIndex > doc->cursorColLastDrawIndex) {
+                doc->cursorColIndex--;
+            }
+            break;
+        }
+
+        if (rowPtr->text[doc->cursorColIndex] == L'\t') {
+            cursorColDrawIndex += config.tabWidth;
+        } else {
+            cursorColDrawIndex++;
+        }
+    }
+}
+
+bool ProcessKeydownVimNormal(WPARAM wparam) {
+    switch (wparam) {
+        default:
+        {
+            return FALSE;
+        }
+    }
+}
+
+bool ProcessKeydownVimInsert(WPARAM wparam) {
+    switch (wparam) {
+        default:
+        {
+            return FALSE;
+        }
+    }
+}
+
+bool ProcessKeydownVim(WPARAM wparam) {
+    switch (currentVimMode) {
+        case MODE_VIM_NORMAL:
+            return ProcessKeydownVimNormal(wparam);
+
+        default:
+            return FALSE;
+    }
+}
+
+bool ProcessCharVimNormal(Doc * doc, wchar_t wc) {
+    switch (wc) {
+        case L'h':
+        {
+            if (doc->cursorColIndex != 0) {
+                doc->cursorColIndex--;
+            }
+            UpdateColDrawIndex(doc);
+            paintStatusMessage = FALSE;
+            return TRUE;
+        }
+
+        case L'l':
+        {
+            ushort rowLength = doc->lines.textBuffer[doc->cursorRowIndex].length;
+            if (rowLength != 0 && doc->cursorColIndex != rowLength - 1) {
+                doc->cursorColIndex++;
+            }
+            UpdateColDrawIndex(doc);
+            paintStatusMessage = FALSE;
+            return TRUE;
+        }
+
+        case L'k':
+        {
+            if (doc->cursorRowIndex != 0) {
+                doc->cursorRowIndex--;
+                ApplyColDrawIndex(doc);
+            }
+            paintStatusMessage = FALSE;
+            return TRUE;
+        }
+
+        case L'j':
+        {
+            if (doc->cursorRowIndex != doc->lines.textBufferCount - 1) {
+                doc->cursorRowIndex++;
+                ApplyColDrawIndex(doc);
+            }
+            paintStatusMessage = FALSE;
+            return TRUE;
+        }
+
+        case L'0':
+        {
+            doc->cursorColIndex = 0;
+            doc->cursorColLastDrawIndex = 0;
+            paintStatusMessage = FALSE;
+            return TRUE;
+        }
+
+        case L'$':
+        {
+            ushort rowLength = doc->lines.textBuffer[doc->cursorRowIndex].length;
+            if (rowLength != 0) {
+                doc->cursorColIndex = rowLength - 1;
+            }
+            UpdateColDrawIndex(doc);
+            paintStatusMessage = FALSE;
+            return TRUE;
+        }
+
+        case L'i':
+        {
+            currentVimMode = MODE_VIM_INSERT;
+            paintStatusMessage = FALSE;
+            return TRUE;
+        }
+
+        default:
+        {
+            return FALSE;
+        }
+    }
+}
+
+void InsertChars(Doc * doc, wchar_t * wcs, ushort count) {
+    DocLine * rowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
+    rowPtr->length += count;
+
+    bool grow = FALSE;
+    while (rowPtr->length > rowPtr->capacity) {
+        rowPtr->capacity *= 2;
+        grow = TRUE;
+    }
+    if (grow) {
+        rowPtr->text = (wchar_t *)realloc(rowPtr->text, rowPtr->capacity * sizeof(wchar_t));
+    }
+
+    for (ushort i = rowPtr->length - 1; i != doc->cursorColIndex + count - 1; i--) {
+        rowPtr->text[i] = rowPtr->text[i - count];
+    }
+    for (ushort i = 0; i != count; i++) {
+        rowPtr->text[doc->cursorColIndex++] = wcs[i];
+    }
+}
+
+bool ProcessCharVimInsert(Doc * doc, wchar_t wc) {
+    switch (wc) {
+        case L'\t':
+        {
+            if (config.expandTabs) {
+                InsertChars(doc, tabSpaces, config.tabWidth);
+            } else {
+                InsertChars(doc, &wc, 1);
+            }
+            UpdateColDrawIndex(doc);
+            paintStatusMessage = FALSE;
+            doc->modified = TRUE;
+            return TRUE;
+        }
+
+        case L'\r':
+        {
+            if (doc->lines.textBufferCount == doc->lines.textBufferCapacity) {
+                doc->lines.textBufferCapacity += TEXTBUFFER_GROW_COUNT;
+                doc->lines.textBuffer = (DocLine *)realloc(doc->lines.textBuffer, doc->lines.textBufferCapacity * sizeof(DocLine));
+            }
+            doc->lines.textBufferCount++;
+            for (ulong i = doc->lines.textBufferCount - 1; i != doc->cursorRowIndex + 1; i--) {
+                doc->lines.textBuffer[i] = doc->lines.textBuffer[i - 1];
+            }
+
+            DocLine * curRowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
+            DocLine * nextRowPtr = curRowPtr + 1;
+            nextRowPtr->length = curRowPtr->length - doc->cursorColIndex;
+            nextRowPtr->capacity = curRowPtr->capacity;
+            nextRowPtr->text = (wchar_t *)malloc(nextRowPtr->capacity * sizeof(wchar_t));
+            for (ushort i = 0; i != nextRowPtr->length; i++) {
+                nextRowPtr->text[i] = curRowPtr->text[doc->cursorColIndex + i];
+            }
+            curRowPtr->length = doc->cursorColIndex;
+            doc->cursorRowIndex++;
+            doc->cursorColIndex = 0;
+            doc->cursorColLastDrawIndex = 0;
+
+            paintStatusMessage = FALSE;
+            doc->modified = TRUE;
+            return TRUE;
+        }
+
+        case '\b':
+        {
+            if (doc->cursorColIndex == 0) {
+                if (doc->cursorRowIndex != 0) {
+                    DocLine * curRowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
+                    DocLine * prevRowPtr = curRowPtr - 1;
+                    doc->cursorRowIndex--;
+                    ushort prevLength = prevRowPtr->length;
+                    doc->cursorColIndex = prevLength;
+                    InsertChars(doc, curRowPtr->text, curRowPtr->length);
+                    free(curRowPtr->text);
+                    for (ulong i = doc->cursorRowIndex + 1; i != doc->lines.textBufferCount - 1; i++) {
+                        doc->lines.textBuffer[i] = doc->lines.textBuffer[i + 1];
+                    }
+                    doc->lines.textBufferCount--;
+                    doc->cursorColIndex = prevLength;
+                    doc->modified = TRUE;
+                }
+            } else {
+                doc->cursorColIndex--;
+                DocLine * rowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
+                for (ushort i = doc->cursorColIndex; i != rowPtr->length - 1; i++) {
+                    rowPtr->text[i] = rowPtr->text[i + 1];
+                }
+                rowPtr->length--;
+                doc->modified = TRUE;
+            }
+
+            UpdateColDrawIndex(doc);
+            paintStatusMessage = FALSE;
+            return TRUE;
+        }
+
+        case 0x1b: // Esc
+        {
+            ushort rowLength = doc->lines.textBuffer[doc->cursorRowIndex].length;
+            if (rowLength != 0 && doc->cursorColIndex == rowLength) {
+                doc->cursorColIndex--;
+                if (doc->cursorColLastDrawIndex != 0) {
+                    doc->cursorColLastDrawIndex--;
+                }
+            }
+            currentVimMode = MODE_VIM_NORMAL;
+            paintStatusMessage = FALSE;
+            return TRUE;
+        }
+
+        default:
+        {
+            if (iswcntrl(wc)) {
+                return FALSE;
+            }
+
+            InsertChars(doc, &wc, 1);
+            UpdateColDrawIndex(doc);
+            paintStatusMessage = FALSE;
+            doc->modified = TRUE;
+            return TRUE;
+        }
+    }
+}
+
+bool ProcessCharVim(Doc * doc, wchar_t wc) {
+    switch (currentVimMode) {
+        case MODE_VIM_NORMAL:
+            return ProcessCharVimNormal(doc, wc);
+
+        case MODE_VIM_INSERT:
+            return ProcessCharVimInsert(doc, wc);
+
+        default:
+            return FALSE;
+    }
+}
+
+enum Mode {
     MODE_INSERT,
     MODE_OPEN_FILE,
     MODE_SAVE_FILE,
-} Mode;
+};
 
 wchar_t workingFolderPath[MAX_PATH];
 wchar_t filePath[MAX_PATH];
-bool modified;
 Mode currentMode;
 ushort statusCursorCol;
 ushort statusInputLength;
 wchar_t statusInput[2 * MAX_PATH];
-bool paintStatusMessage;
 
-void TrySaveFile() {
+void TrySaveFile(DocLines * docLinesPtr) {
     statusInput[statusInputLength] = L'\0';
     HANDLE file = CreateFileW(
         statusInput,
@@ -86,17 +399,16 @@ void TrySaveFile() {
         NULL);
     if (file == INVALID_HANDLE_VALUE) {
         wcscpy_s(statusInput, 2 * MAX_PATH, L"File could not be saved!");
-        statusInputLength = wcslen(statusInput);
+        statusInputLength = (ushort)wcslen(statusInput);
         paintStatusMessage = TRUE;
         currentMode = MODE_INSERT;
         return;
     }
 
     wcscpy_s(filePath, MAX_PATH, statusInput);
-    modified = FALSE;
     currentMode = MODE_INSERT;
 
-    TextRow * rowPtr = &textBuffer[0];
+    DocLine * rowPtr = &docLinesPtr->textBuffer[0];
     byte output[4];
     ushort outputCount;
     ulong c;
@@ -137,8 +449,8 @@ void TrySaveFile() {
         WriteFile(file, output, outputCount, &currentCount, NULL);
     }
 
-    for (ulong i = 1; i != textBufferCount; i++) {
-        rowPtr = &textBuffer[i];
+    for (ulong i = 1; i != docLinesPtr->textBufferCount; i++) {
+        rowPtr = &docLinesPtr->textBuffer[i];
         WriteFile(file, newline, 2, &currentCount, NULL);
 
         for (ushort j = 0; j != rowPtr->length; j++) {
@@ -178,15 +490,15 @@ void TrySaveFile() {
     CloseHandle(file);
 }
 
-void AppendChar(TextRow * rowPtr, wchar_t c) {
+void AppendChar(DocLine * rowPtr, wchar_t c) {
     if (rowPtr->length == rowPtr->capacity) {
         rowPtr->capacity *= 2;
-        rowPtr->text = realloc(rowPtr->text, rowPtr->capacity * sizeof(wchar_t));
+        rowPtr->text = (wchar_t *)realloc(rowPtr->text, rowPtr->capacity * sizeof(wchar_t));
     }
     rowPtr->text[rowPtr->length++] = c;
 }
 
-typedef enum Utf8State {
+enum Utf8State {
     UTF8_START,
     UTF8_END_OK,
     UTF8_END_ERROR,
@@ -194,12 +506,25 @@ typedef enum Utf8State {
     UTF8_READ_2,
     UTF8_READ_3,
     UTF8_READ_ERROR,
-} Utf8State;
+};
 
-void TryLoadFile() {
+Doc * TryLoadFilePath(wchar_t * filePath, bool appendNull);
+
+Doc * TryLoadFile() {
     statusInput[statusInputLength] = L'\0';
+    Doc * result = TryLoadFilePath(statusInput, FALSE);
+    if (!result) {
+        wcscpy_s(statusInput, 2 * MAX_PATH, L"File could not be opened!");
+        statusInputLength = (ushort)wcslen(statusInput);
+        paintStatusMessage = TRUE;
+        currentMode = MODE_INSERT;
+    }
+    return result;
+}
+
+Doc * TryLoadFilePath(wchar_t * filePath, bool appendNull) {
     HANDLE file = CreateFileW(
-        statusInput,
+        filePath,
         GENERIC_READ,
         FILE_SHARE_READ,
         NULL,
@@ -207,32 +532,16 @@ void TryLoadFile() {
         FILE_FLAG_SEQUENTIAL_SCAN,
         NULL);
     if (file == INVALID_HANDLE_VALUE) {
-        wcscpy_s(statusInput, 2 * MAX_PATH, L"File could not be opened!");
-        statusInputLength = wcslen(statusInput);
-        paintStatusMessage = TRUE;
-        currentMode = MODE_INSERT;
-        return;
+        return NULL;
     }
 
     wcscpy_s(filePath, MAX_PATH, statusInput);
 
-    for (ulong i = 0; i != textBufferCount; i++) {
-        free(textBuffer[i].text);
-    }
-    textBufferCount = 0;
+    Doc * docPtr = CreateEmptyDoc();
+    DocLines * docLines = &docPtr->lines;
+    DocLine * rowPtr = &docLines->textBuffer[0];
 
-    cursorRowIndex = 0;
-    cursorColIndex = 0;
-    cursorColLastDrawIndex = 0;
-    topDrawRowIndex = 0;
-    modified = FALSE;
     currentMode = MODE_INSERT;
-
-    textBufferCount = 1;
-    TextRow * rowPtr = &textBuffer[0];
-    rowPtr->length = 0;
-    rowPtr->capacity = INIT_ROW_CAPACITY;
-    rowPtr->text = malloc(INIT_ROW_CAPACITY * sizeof(wchar_t));
 
     bool limited = sizeof(wchar_t) < 4;
     
@@ -287,17 +596,23 @@ void TryLoadFile() {
                 } else if (c == L'\0') {
                     currentCount = 0;
                 } else if (c == L'\n' || c == L'\r') {
-                    if (textBufferCount == textBufferCapacity) {
-                        textBufferCapacity += TEXTBUFFER_GROW_COUNT;
-                        textBuffer = realloc(textBuffer, textBufferCapacity * sizeof(TextRow));
+                    if (appendNull) {
+                        AppendChar(rowPtr, L'\0');
+                        rowPtr->length--;
                     }
-                    rowPtr = &textBuffer[textBufferCount++];
+
+                    if (docLines->textBufferCount == docLines->textBufferCapacity) {
+                        docLines->textBufferCapacity += TEXTBUFFER_GROW_COUNT;
+                        docLines->textBuffer = (DocLine *)realloc(docLines->textBuffer, docLines->textBufferCapacity * sizeof(DocLine));
+                    }
+                    rowPtr = &docLines->textBuffer[docLines->textBufferCount++];
+
                     rowPtr->length = 0;
                     rowPtr->capacity = INIT_ROW_CAPACITY;
-                    rowPtr->text = malloc(INIT_ROW_CAPACITY * sizeof(wchar_t));
+                    rowPtr->text = (wchar_t *)malloc(INIT_ROW_CAPACITY * sizeof(wchar_t));
                     lastWasNewline = c == L'\r';
                 } else {
-                    AppendChar(rowPtr, c);
+                    AppendChar(rowPtr, (wchar_t)c);
                 }
                 state = UTF8_START;
                 break;
@@ -359,67 +674,18 @@ void TryLoadFile() {
     if (state != UTF8_START) {
         AppendChar(rowPtr, 0xfffd);
     }
+    if (appendNull) {
+        AppendChar(rowPtr, L'\0');
+        rowPtr->length--;
+    }
 
     CloseHandle(file);
-}
-
-void InsertChars(wchar_t * wcs, ushort count) {
-    TextRow * rowPtr = &textBuffer[cursorRowIndex];
-    
-    rowPtr->length += count;
-    bool grow = FALSE;
-    while (rowPtr->length > rowPtr->capacity) {
-        rowPtr->capacity *= 2;
-        grow = TRUE;
-    }
-    if (grow) {
-        rowPtr->text = realloc(rowPtr->text, rowPtr->capacity * sizeof(wchar_t));
-    }
-
-    ushort newCursorColIndex = cursorColIndex + count;
-    for (ushort i = rowPtr->length - 1; i >= newCursorColIndex; i--) {
-        rowPtr->text[i] = rowPtr->text[i - count];
-    }
-    for (ushort i = 0; i != count; i++) {
-        rowPtr->text[cursorColIndex + i] = wcs[i];
-    }
-    cursorColIndex = newCursorColIndex;
-}
-
-void UpdateColDrawIndex() {
-    wchar_t * text = textBuffer[cursorRowIndex].text;
-    cursorColLastDrawIndex = 0;
-    for (ushort i = 0; i != cursorColIndex; i++) {
-        if (text[i] == L'\t') {
-            cursorColLastDrawIndex += tabWidth;
-        } else {
-            cursorColLastDrawIndex++;
-        }
-    }
-}
-
-void ApplyColDrawIndex() {
-    TextRow * rowPtr = &textBuffer[cursorRowIndex];
-    ulong cursorColDrawIndex = 0;
-    for (cursorColIndex = 0; cursorColIndex != rowPtr->length; cursorColIndex++) {
-        if (cursorColDrawIndex >= cursorColLastDrawIndex) {
-            if (cursorColDrawIndex > cursorColLastDrawIndex) {
-                cursorColIndex--;
-            }
-            break;
-        }
-
-        if (rowPtr->text[cursorColIndex] == L'\t') {
-            cursorColDrawIndex += tabWidth;
-        } else {
-            cursorColDrawIndex++;
-        }
-    }
+    return docPtr;
 }
 
 wchar_t * wcschr_s(wchar_t * wcs, ushort length, wchar_t c) {
     wchar_t * end = wcs + length;
-    while (wcs != end && wcs != L'\0') {
+    while (wcs != end && *wcs != L'\0') {
         if (*wcs == c) {
             return wcs;
         }
@@ -444,7 +710,7 @@ void PaintCursorRow(
     wchar_t * nextTabPos = wcschr_s(currentText, currentLength, L'\t');
     long cursorOffset = colIndex;
     while (nextTabPos) {
-        ushort nextTabOffset = nextTabPos - currentText;
+        ushort nextTabOffset = (ushort)(nextTabPos - currentText);
         if (cursorOffset < 0 || cursorOffset >= nextTabOffset) {
             GetTextExtentPoint32W(
                 bitmapDeviceContext,
@@ -469,18 +735,18 @@ void PaintCursorRow(
                 cursorRect.top = textRectPtr->top;
                 cursorRect.right = textRectPtr->left + avgCharWidth;
                 cursorRect.bottom = textRectPtr->top + lineHeight;
-                FillRect(bitmapDeviceContext, &cursorRect, cursorBackgroundBrush);
+                FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
             }
 
             GetTextExtentPoint32W(
                 bitmapDeviceContext,
                 tabSpaces,
-                tabWidth,
+                config.tabWidth,
                 &extent);
             DrawTextExW(
                 bitmapDeviceContext,
                 tabSpaces,
-                tabWidth,
+                config.tabWidth,
                 textRectPtr,
                 DT_NOCLIP | DT_NOPREFIX,
                 NULL);
@@ -516,7 +782,7 @@ void PaintCursorRow(
             cursorRect.top = textRectPtr->top;
             cursorRect.right = textRectPtr->left + extent.cx;
             cursorRect.bottom = textRectPtr->top + lineHeight;
-            FillRect(bitmapDeviceContext, &cursorRect, cursorBackgroundBrush);
+            FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
 
             GetTextExtentPoint32W(
                 bitmapDeviceContext,
@@ -538,12 +804,12 @@ void PaintCursorRow(
             GetTextExtentPoint32W(
                 bitmapDeviceContext,
                 tabSpaces,
-                tabWidth,
+                config.tabWidth,
                 &extent);
             DrawTextExW(
                 bitmapDeviceContext,
                 tabSpaces,
-                tabWidth,
+                config.tabWidth,
                 textRectPtr,
                 DT_NOCLIP | DT_NOPREFIX,
                 NULL);
@@ -581,7 +847,7 @@ void PaintCursorRow(
                 cursorRect.top = textRectPtr->top;
                 cursorRect.right = textRectPtr->left + avgCharWidth;
                 cursorRect.bottom = textRectPtr->top + lineHeight;
-                FillRect(bitmapDeviceContext, &cursorRect, cursorBackgroundBrush);
+                FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
             }
         } else if (cursorOffset >= 0) {
             GetTextExtentPoint32W(
@@ -611,7 +877,7 @@ void PaintCursorRow(
                 FillRect(
                     bitmapDeviceContext,
                     &cursorRect,
-                    cursorBackgroundBrush);
+                    cursorBrush);
 
                 DrawTextExW(
                     bitmapDeviceContext,
@@ -633,9 +899,9 @@ void PaintCursorRow(
     }
 }
 
-void Paint() {
+void Paint(Doc * docPtr) {
     if (bitmapWidth == 0 || bitmapHeight == 0) {
-        lastDrawRowCount = 0;
+        docPtr->lastDrawRowCount = 0;
         return;
     }
 
@@ -647,12 +913,12 @@ void Paint() {
 
     FillRect(bitmapDeviceContext, &clientRect, backgroundBrush);
 
-    SetTextColor(bitmapDeviceContext, textColor);
+    SetTextColor(bitmapDeviceContext, config.textColor);
     SetBkMode(bitmapDeviceContext, TRANSPARENT);
 
     ulong drawRowCount = bitmapHeight / lineHeight;
     if (drawRowCount == 0) {
-        lastDrawRowCount = 0;
+        docPtr->lastDrawRowCount = 0;
         return;
     }
     drawRowCount--;
@@ -684,17 +950,17 @@ void Paint() {
         fileRect.top = clientRect.top + lineHeight;
         fileRect.right = clientRect.right;
         fileRect.bottom = fileRect.top + lineHeight;
-        FillRect(bitmapDeviceContext, &fileRect, fileBackgroundBrush);
+        FillRect(bitmapDeviceContext, &fileRect, docTitleBackgroundBrush);
 
         wchar_t filePathLine[MAX_PATH + 32];
         if (filePath[0] == L'\0') {
-            if (modified) {
+            if (docPtr->modified) {
                 wcscpy_s(filePathLine, MAX_PATH + 32, L"<UNNAMED> (modified)");
             } else {
                 wcscpy_s(filePathLine, MAX_PATH + 32, L"<UNNAMED>");
             }
         } else {
-            if (modified) {
+            if (docPtr->modified) {
                 swprintf_s(filePathLine, MAX_PATH + 32, L"%s (modified)", filePath);
             } else {
                 wcscpy_s(filePathLine, MAX_PATH + 32, filePath);
@@ -717,37 +983,37 @@ void Paint() {
     textRect.right = clientRect.right;
     textRect.bottom = clientRect.bottom - lineHeight;
 
-    if (cursorRowIndex < topDrawRowIndex) {
-        topDrawRowIndex = cursorRowIndex;
+    if (docPtr->cursorRowIndex < docPtr->topDrawRowIndex) {
+        docPtr->topDrawRowIndex = docPtr->cursorRowIndex;
     }
-    ulong bottomDrawRowIndex = topDrawRowIndex + drawRowCount;
-    if (cursorRowIndex >= bottomDrawRowIndex) {
-        topDrawRowIndex += cursorRowIndex - bottomDrawRowIndex + 1;
-        bottomDrawRowIndex = cursorRowIndex + 1;
-    } else if (topDrawRowIndex != 0 && bottomDrawRowIndex > textBufferCount) {
-        ulong diff = bottomDrawRowIndex - textBufferCount;
-        if (diff > topDrawRowIndex) {
-            topDrawRowIndex = 0;
+    ulong bottomDrawRowIndex = docPtr->topDrawRowIndex + drawRowCount;
+    if (docPtr->cursorRowIndex >= bottomDrawRowIndex) {
+        docPtr->topDrawRowIndex += docPtr->cursorRowIndex - bottomDrawRowIndex + 1;
+        bottomDrawRowIndex = docPtr->cursorRowIndex + 1;
+    } else if (docPtr->topDrawRowIndex != 0 && bottomDrawRowIndex > docPtr->lines.textBufferCount) {
+        ulong diff = bottomDrawRowIndex - docPtr->lines.textBufferCount;
+        if (diff > docPtr->topDrawRowIndex) {
+            docPtr->topDrawRowIndex = 0;
         } else {
-            topDrawRowIndex -= diff;
+            docPtr->topDrawRowIndex -= diff;
         }
     }
 
-    for (ulong i = topDrawRowIndex; i != textBufferCount; i++) {
+    for (ulong i = docPtr->topDrawRowIndex; i != docPtr->lines.textBufferCount; i++) {
         if (textRect.bottom - textRect.top < lineHeight) {
             break;
         }
 
-        TextRow * rowPtr = &textBuffer[i];
-        if (i == cursorRowIndex && currentMode == MODE_INSERT) {
-            PaintCursorRow(&textRect, rowPtr->text, rowPtr->length, cursorColIndex);
+        DocLine * rowPtr = &docPtr->lines.textBuffer[i];
+        if (i == docPtr->cursorRowIndex && currentMode == MODE_INSERT) {
+            PaintCursorRow(&textRect, rowPtr->text, rowPtr->length, docPtr->cursorColIndex);
         } else {
             wchar_t * currentText = rowPtr->text;
             ushort currentLength = rowPtr->length;
             wchar_t * nextTabPos = wcschr_s(currentText, currentLength, L'\t');
             while (nextTabPos) {
                 SIZE extent;
-                ushort nextTabOffset = nextTabPos - currentText;
+                ushort nextTabOffset = (ushort)(nextTabPos - currentText);
 
                 GetTextExtentPoint32W(
                     bitmapDeviceContext,
@@ -769,12 +1035,12 @@ void Paint() {
                 GetTextExtentPoint32W(
                     bitmapDeviceContext,
                     tabSpaces,
-                    tabWidth,
+                    config.tabWidth,
                     &extent);
                 DrawTextExW(
                     bitmapDeviceContext,
                     tabSpaces,
-                    tabWidth,
+                    config.tabWidth,
                     &textRect,
                     DT_NOCLIP | DT_NOPREFIX,
                     NULL);
@@ -802,7 +1068,7 @@ void Paint() {
 
         textRect.left = 0;
         textRect.top += lineHeight;
-        lastDrawRowCount++;
+        docPtr->lastDrawRowCount++;
     }
 
     RECT statusRect;
@@ -812,10 +1078,68 @@ void Paint() {
     statusRect.bottom = clientRect.bottom;
     if (paintStatusMessage) {
         FillRect(bitmapDeviceContext, &statusRect, promptBackgroundBrush);
-        SetTextColor(bitmapDeviceContext, promptTextColor);
+        SetTextColor(bitmapDeviceContext, config.promptTextColor);
         DrawTextExW(
             bitmapDeviceContext,
             statusInput,
+            -1,
+            &statusRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            NULL);
+    } else if (config.useVimMode) {
+        FillRect(bitmapDeviceContext, &statusRect, statusBackgroundBrush);
+
+        ulong rowPercent;
+        if (docPtr->lines.textBufferCount > 1) {
+            rowPercent = (100 * docPtr->cursorRowIndex) / (docPtr->lines.textBufferCount - 1);
+        } else {
+            rowPercent = 0;
+        }
+
+        DocLine * cursorRowPtr = &docPtr->lines.textBuffer[docPtr->cursorRowIndex];
+        ulong cursorColDrawIndex = 0;
+        for (ushort i = 0; i != docPtr->cursorColIndex; i++) {
+            if (cursorRowPtr->text[i] == L'\t') {
+                cursorColDrawIndex += config.tabWidth;
+            } else {
+                cursorColDrawIndex++;
+            }
+        }
+        ulong cursorRowDrawLength = 0;
+        for (ushort i = 0; i != cursorRowPtr->length; i++) {
+            if (cursorRowPtr->text[i] == L'\t') {
+                cursorRowDrawLength += config.tabWidth;
+            } else {
+                cursorRowDrawLength++;
+            }
+        }
+
+        const wchar_t vimNormalText[] = L"[NORMAL]";
+        const wchar_t vimInsertText[] = L"[INSERT]";
+        const wchar_t * vimModeText;
+        if (currentVimMode == MODE_VIM_NORMAL) {
+            vimModeText = vimNormalText;
+        } else {
+            vimModeText = vimInsertText;
+        }
+
+        wchar_t statusLine[256];
+        swprintf_s(
+            statusLine,
+            256,
+            L"%s    Row: %lu/%lu (%lu %%)    Col: %hu/%hu (%lu/%lu)",
+            vimModeText,
+            docPtr->cursorRowIndex + 1,
+            docPtr->lines.textBufferCount,
+            rowPercent,
+            docPtr->cursorColIndex + 1,
+            cursorRowPtr->length,
+            cursorColDrawIndex + 1,
+            cursorRowDrawLength);
+
+        DrawTextExW(
+            bitmapDeviceContext,
+            statusLine,
             -1,
             &statusRect,
             DT_NOCLIP | DT_NOPREFIX,
@@ -824,17 +1148,17 @@ void Paint() {
         FillRect(bitmapDeviceContext, &statusRect, statusBackgroundBrush);
 
         ulong rowPercent;
-        if (textBufferCount > 1) {
-            rowPercent = (100 * cursorRowIndex) / (textBufferCount - 1);
+        if (docPtr->lines.textBufferCount > 1) {
+            rowPercent = (100 * docPtr->cursorRowIndex) / (docPtr->lines.textBufferCount - 1);
         } else {
             rowPercent = 0;
         }
 
-        TextRow * cursorRowPtr = &textBuffer[cursorRowIndex];
+        DocLine * cursorRowPtr = &docPtr->lines.textBuffer[docPtr->cursorRowIndex];
         ulong cursorColDrawIndex = 0;
-        for (ushort i = 0; i != cursorColIndex; i++) {
+        for (ushort i = 0; i != docPtr->cursorColIndex; i++) {
             if (cursorRowPtr->text[i] == L'\t') {
-                cursorColDrawIndex += tabWidth;
+                cursorColDrawIndex += config.tabWidth;
             } else {
                 cursorColDrawIndex++;
             }
@@ -842,7 +1166,7 @@ void Paint() {
         ulong cursorRowDrawLength = 0;
         for (ushort i = 0; i != cursorRowPtr->length; i++) {
             if (cursorRowPtr->text[i] == L'\t') {
-                cursorRowDrawLength += tabWidth;
+                cursorRowDrawLength += config.tabWidth;
             } else {
                 cursorRowDrawLength++;
             }
@@ -853,10 +1177,10 @@ void Paint() {
             statusLine,
             128,
             L"Row: %lu/%lu (%lu %%)    Col: %hu/%hu (%lu/%lu)",
-            cursorRowIndex + 1,
-            textBufferCount,
+            docPtr->cursorRowIndex + 1,
+            docPtr->lines.textBufferCount,
             rowPercent,
-            cursorColIndex + 1,
+            docPtr->cursorColIndex + 1,
             cursorRowPtr->length,
             cursorColDrawIndex + 1,
             cursorRowDrawLength);
@@ -870,22 +1194,22 @@ void Paint() {
             NULL);
     } else if (currentMode == MODE_OPEN_FILE) {
         FillRect(bitmapDeviceContext, &statusRect, promptBackgroundBrush);
-        SetTextColor(bitmapDeviceContext, promptTextColor);
+        SetTextColor(bitmapDeviceContext, config.promptTextColor);
 
         wchar_t statusLine[2 * MAX_PATH + 32] = L"Open: ";
-        ushort prefixOffset = wcslen(statusLine);
+        ushort prefixOffset = (ushort)wcslen(statusLine);
         wcsncpy_s(statusLine + prefixOffset, 2 * MAX_PATH, statusInput, statusInputLength);
         ushort actualCursorCol = statusCursorCol + prefixOffset;
-        PaintCursorRow(&statusRect, statusLine, wcslen(statusLine), actualCursorCol);
+        PaintCursorRow(&statusRect, statusLine, (ushort)wcslen(statusLine), actualCursorCol);
     } else if (currentMode == MODE_SAVE_FILE) {
         FillRect(bitmapDeviceContext, &statusRect, promptBackgroundBrush);
-        SetTextColor(bitmapDeviceContext, promptTextColor);
+        SetTextColor(bitmapDeviceContext, config.promptTextColor);
 
         wchar_t statusLine[2 * MAX_PATH + 32] = L"Save: ";
-        ushort prefixOffset = wcslen(statusLine);
+        ushort prefixOffset = (ushort)wcslen(statusLine);
         wcsncpy_s(statusLine + prefixOffset, 2 * MAX_PATH, statusInput, statusInputLength);
         ushort actualCursorCol = statusCursorCol + prefixOffset;
-        PaintCursorRow(&statusRect, statusLine, wcslen(statusLine), actualCursorCol);
+        PaintCursorRow(&statusRect, statusLine, (ushort)wcslen(statusLine), actualCursorCol);
     }
 }
 
@@ -899,7 +1223,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 bitmapDeviceContext = CreateCompatibleDC(deviceContext);
 
                 int ppi = GetDeviceCaps(bitmapDeviceContext, LOGPIXELSY);
-                int lfHeight = 0 - ((fontSize * ppi) / 72);
+                int lfHeight = 0 - ((config.fontSize * ppi) / 72);
                 HFONT font = CreateFontW(
                     lfHeight,
                     0,
@@ -914,8 +1238,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     CLIP_DEFAULT_PRECIS,
                     DEFAULT_QUALITY,
                     DEFAULT_PITCH | FF_DONTCARE,
-                    fontName);
-                HFONT oldFont = SelectObject(bitmapDeviceContext, font);
+                    config.fontName);
+                HFONT oldFont = (HFONT)SelectObject(bitmapDeviceContext, font);
                 if (oldFont) {
                     DeleteObject(oldFont);
                 }
@@ -929,12 +1253,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             bitmapWidth = LOWORD(lparam);
             bitmapHeight = HIWORD(lparam);
             HBITMAP bitmap = CreateCompatibleBitmap(deviceContext, bitmapWidth, bitmapHeight);
-            HBITMAP oldBitmap = SelectObject(bitmapDeviceContext, bitmap);
+            HBITMAP oldBitmap = (HBITMAP)SelectObject(bitmapDeviceContext, bitmap);
             if (oldBitmap) {
                 DeleteObject(oldBitmap);
             }
 
-            Paint();
+            Paint(onlyDoc);
             return 0;
         }
 
@@ -964,12 +1288,20 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 
         case WM_KEYDOWN:
         {
+            if (config.useVimMode) {
+                if (ProcessKeydownVim(wparam)) {
+                    Paint(onlyDoc);
+                    InvalidateRect(window, NULL, FALSE);
+                }
+                return 0;
+            }
+
             switch (wparam) {
                 case VK_ESCAPE:
                 {
                     currentMode = MODE_INSERT;
                     paintStatusMessage = FALSE;
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -977,22 +1309,22 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 case VK_LEFT:
                 {
                     if (currentMode == MODE_INSERT) {
-                        if (cursorColIndex == 0) {
-                            if (cursorRowIndex != 0) {
-                                cursorRowIndex--;
-                                cursorColIndex = textBuffer[cursorRowIndex].length;
+                        if (onlyDoc->cursorColIndex == 0) {
+                            if (onlyDoc->cursorRowIndex != 0) {
+                                onlyDoc->cursorRowIndex--;
+                                onlyDoc->cursorColIndex = onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex].length;
                             }
                         } else {
-                            cursorColIndex--;
+                            onlyDoc->cursorColIndex--;
                         }
-                        UpdateColDrawIndex();
+                        UpdateColDrawIndex(onlyDoc);
                         paintStatusMessage = FALSE;
                     } else {
                         if (statusCursorCol != 0) {
                             statusCursorCol--;
                         }
                     }
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -1000,22 +1332,22 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 case VK_RIGHT:
                 {
                     if (currentMode == MODE_INSERT) {
-                        if (cursorColIndex == textBuffer[cursorRowIndex].length) {
-                            if (cursorRowIndex != textBufferCount - 1) {
-                                cursorRowIndex++;
-                                cursorColIndex = 0;
+                        if (onlyDoc->cursorColIndex == onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex].length) {
+                            if (onlyDoc->cursorRowIndex != onlyDoc->lines.textBufferCount - 1) {
+                                onlyDoc->cursorRowIndex++;
+                                onlyDoc->cursorColIndex = 0;
                             }
                         } else {
-                            cursorColIndex++;
+                            onlyDoc->cursorColIndex++;
                         }
-                        UpdateColDrawIndex();
+                        UpdateColDrawIndex(onlyDoc);
                         paintStatusMessage = FALSE;
                     } else {
                         if (statusCursorCol != statusInputLength) {
                             statusCursorCol++;
                         }
                     }
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -1026,12 +1358,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                         break;
                     }
 
-                    if (cursorRowIndex != 0) {
-                        cursorRowIndex--;
-                        ApplyColDrawIndex();
+                    if (onlyDoc->cursorRowIndex != 0) {
+                        onlyDoc->cursorRowIndex--;
+                        ApplyColDrawIndex(onlyDoc);
                     }
                     paintStatusMessage = FALSE;
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -1042,12 +1374,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                         break;
                     }
 
-                    if (cursorRowIndex != textBufferCount - 1) {
-                        cursorRowIndex++;
-                        ApplyColDrawIndex();
+                    if (onlyDoc->cursorRowIndex != onlyDoc->lines.textBufferCount - 1) {
+                        onlyDoc->cursorRowIndex++;
+                        ApplyColDrawIndex(onlyDoc);
                     }
                     paintStatusMessage = FALSE;
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -1056,15 +1388,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 {
                     if (currentMode == MODE_INSERT) {
                         if (GetAsyncKeyState(VK_CONTROL) & SHRT_MIN) {
-                            cursorRowIndex = 0;
+                            onlyDoc->cursorRowIndex = 0;
                         }
-                        cursorColIndex = 0;
-                        cursorColLastDrawIndex = 0;
+                        onlyDoc->cursorColIndex = 0;
+                        onlyDoc->cursorColLastDrawIndex = 0;
                         paintStatusMessage = FALSE;
                     } else {
                         statusCursorCol = 0;
                     }
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -1073,15 +1405,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 {
                     if (currentMode == MODE_INSERT) {
                         if (GetAsyncKeyState(VK_CONTROL) & SHRT_MIN) {
-                            cursorRowIndex = textBufferCount - 1;
+                            onlyDoc->cursorRowIndex = onlyDoc->lines.textBufferCount - 1;
                         }
-                        cursorColIndex = textBuffer[cursorRowIndex].length;
-                        UpdateColDrawIndex();
+                        onlyDoc->cursorColIndex = onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex].length;
+                        UpdateColDrawIndex(onlyDoc);
                         paintStatusMessage = FALSE;
                     } else {
                         statusCursorCol = statusInputLength - 1;
                     }
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -1092,20 +1424,20 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                         break;
                     }
 
-                    if (lastDrawRowCount >= cursorRowIndex) {
-                        cursorRowIndex = 0;
-                        topDrawRowIndex = 0;
+                    if (onlyDoc->lastDrawRowCount >= onlyDoc->cursorRowIndex) {
+                        onlyDoc->cursorRowIndex = 0;
+                        onlyDoc->topDrawRowIndex = 0;
                     } else {
-                        cursorRowIndex -= lastDrawRowCount;
-                        if (lastDrawRowCount >= topDrawRowIndex) {
-                            topDrawRowIndex = 0;
+                        onlyDoc->cursorRowIndex -= onlyDoc->lastDrawRowCount;
+                        if (onlyDoc->lastDrawRowCount >= onlyDoc->topDrawRowIndex) {
+                            onlyDoc->topDrawRowIndex = 0;
                         } else {
-                            topDrawRowIndex -= lastDrawRowCount;
+                            onlyDoc->topDrawRowIndex -= onlyDoc->lastDrawRowCount;
                         }
                     }
-                    ApplyColDrawIndex();
+                    ApplyColDrawIndex(onlyDoc);
                     paintStatusMessage = FALSE;
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -1116,16 +1448,16 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                         break;
                     }
 
-                    cursorRowIndex += lastDrawRowCount;
-                    if (cursorRowIndex < textBufferCount) {
-                        topDrawRowIndex += lastDrawRowCount;
+                    onlyDoc->cursorRowIndex += onlyDoc->lastDrawRowCount;
+                    if (onlyDoc->cursorRowIndex < onlyDoc->lines.textBufferCount) {
+                        onlyDoc->topDrawRowIndex += onlyDoc->lastDrawRowCount;
                     } else {
-                        cursorRowIndex = textBufferCount - 1;
-                        topDrawRowIndex = 0;
+                        onlyDoc->cursorRowIndex = onlyDoc->lines.textBufferCount - 1;
+                        onlyDoc->topDrawRowIndex = 0;
                     }
-                    ApplyColDrawIndex();
+                    ApplyColDrawIndex(onlyDoc);
                     paintStatusMessage = FALSE;
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -1133,15 +1465,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 case VK_DELETE:
                 {
                     if (currentMode == MODE_INSERT) {
-                        TextRow * rowPtr = &textBuffer[cursorRowIndex];
-                        if (cursorColIndex == rowPtr->length) {
-                            if (cursorRowIndex != textBufferCount - 1) {
-                                TextRow * nextRowPtr = &textBuffer[cursorRowIndex + 1];
+                        DocLine * rowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex];
+                        if (onlyDoc->cursorColIndex == rowPtr->length) {
+                            if (onlyDoc->cursorRowIndex != onlyDoc->lines.textBufferCount - 1) {
+                                DocLine * nextRowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex + 1];
                                 ushort oldLength = rowPtr->length;
                                 rowPtr->length += nextRowPtr->length;
                                 if (rowPtr->length > rowPtr->capacity) {
                                     rowPtr->capacity += nextRowPtr->capacity;
-                                    rowPtr->text = realloc(rowPtr->text, rowPtr->capacity * sizeof(wchar_t));
+                                    rowPtr->text = (wchar_t *)realloc(rowPtr->text, rowPtr->capacity * sizeof(wchar_t));
                                 }
 
                                 for (ushort i = 0; i != nextRowPtr->length; i++) {
@@ -1149,22 +1481,22 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                                 }
                                 free(nextRowPtr->text);
 
-                                for (ulong i = cursorRowIndex + 1; i != textBufferCount - 1; i++) {
-                                    textBuffer[i] = textBuffer[i + 1];
+                                for (ulong i = onlyDoc->cursorRowIndex + 1; i != onlyDoc->lines.textBufferCount - 1; i++) {
+                                    onlyDoc->lines.textBuffer[i] = onlyDoc->lines.textBuffer[i + 1];
                                 }
-                                textBufferCount--;
+                                onlyDoc->lines.textBufferCount--;
 
-                                modified = TRUE;
+                                onlyDoc->modified = TRUE;
                             }
                         } else {
-                            for (ushort i = cursorColIndex; i != rowPtr->length - 1; i++) {
+                            for (ushort i = onlyDoc->cursorColIndex; i != rowPtr->length - 1; i++) {
                                 rowPtr->text[i] = rowPtr->text[i + 1];
                             }
                             rowPtr->length--;
 
-                            modified = TRUE;
+                            onlyDoc->modified = TRUE;
                         }
-                        UpdateColDrawIndex();
+                        UpdateColDrawIndex(onlyDoc);
                         paintStatusMessage = FALSE;
                     } else {
                         if (statusCursorCol != statusInputLength) {
@@ -1174,7 +1506,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                             statusInputLength--;
                         }
                     }
-                    Paint();
+                    Paint(onlyDoc);
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
@@ -1185,6 +1517,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         case WM_CHAR:
         {
             wchar_t c = (wchar_t)wparam;
+
+            if (config.useVimMode) {
+                if (ProcessCharVim(onlyDoc, c)) {
+                    Paint(onlyDoc);
+                    InvalidateRect(window, NULL, FALSE);
+                }
+                return 0;
+            }
+
             switch (c) {
                 case L'\t':
                 {
@@ -1192,13 +1533,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                         break;
                     }
 
-                    if (expandTabs) {
-                        InsertChars(tabSpaces, tabWidth);
+                    if (config.expandTabs) {
+                        InsertChars(onlyDoc, tabSpaces, config.tabWidth);
                     } else {
-                        InsertChars(&c, 1);
+                        InsertChars(onlyDoc, &c, 1);
                     }
-                    modified = TRUE;
-                    UpdateColDrawIndex();
+                    onlyDoc->modified = TRUE;
+                    UpdateColDrawIndex(onlyDoc);
                     paintStatusMessage = FALSE;
                     break;
                 }
@@ -1206,40 +1547,44 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 case L'\r':
                 {
                     if (currentMode == MODE_INSERT) {
-                        if (textBufferCount == textBufferCapacity) {
-                            textBufferCapacity += TEXTBUFFER_GROW_COUNT;
-                            textBuffer = realloc(textBuffer, textBufferCapacity * sizeof(TextRow));
+                        if (onlyDoc->lines.textBufferCount == onlyDoc->lines.textBufferCapacity) {
+                            onlyDoc->lines.textBufferCapacity += TEXTBUFFER_GROW_COUNT;
+                            onlyDoc->lines.textBuffer = (DocLine *)realloc(onlyDoc->lines.textBuffer, onlyDoc->lines.textBufferCapacity * sizeof(DocLine));
                         }
-                        textBufferCount++;
+                        onlyDoc->lines.textBufferCount++;
 
-                        for (ulong i = textBufferCount - 1; i != cursorRowIndex + 1; i--) {
-                            textBuffer[i] = textBuffer[i - 1];
+                        for (ulong i = onlyDoc->lines.textBufferCount - 1; i != onlyDoc->cursorRowIndex + 1; i--) {
+                            onlyDoc->lines.textBuffer[i] = onlyDoc->lines.textBuffer[i - 1];
                         }
 
-                        TextRow * rowPtr = &textBuffer[cursorRowIndex];
-                        TextRow * newRowPtr = &textBuffer[cursorRowIndex + 1];
-                        newRowPtr->length = rowPtr->length - cursorColIndex;
+                        DocLine * rowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex];
+                        DocLine * newRowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex + 1];
+                        newRowPtr->length = rowPtr->length - onlyDoc->cursorColIndex;
                         newRowPtr->capacity = INIT_ROW_CAPACITY;
                         while (newRowPtr->length > newRowPtr->capacity) {
                             newRowPtr->capacity *= 2;
                         }
-                        newRowPtr->text = malloc(newRowPtr->capacity * sizeof(wchar_t));
+                        newRowPtr->text = (wchar_t *)malloc(newRowPtr->capacity * sizeof(wchar_t));
 
                         for (ushort i = 0; i != newRowPtr->length; i++) {
-                            newRowPtr->text[i] = rowPtr->text[cursorColIndex + i];
+                            newRowPtr->text[i] = rowPtr->text[onlyDoc->cursorColIndex + i];
                         }
 
-                        rowPtr->length = cursorColIndex;
-                        cursorColIndex = 0;
-                        cursorColLastDrawIndex = 0;
-                        cursorRowIndex++;
+                        rowPtr->length = onlyDoc->cursorColIndex;
+                        onlyDoc->cursorColIndex = 0;
+                        onlyDoc->cursorColLastDrawIndex = 0;
+                        onlyDoc->cursorRowIndex++;
 
-                        modified = TRUE;
+                        onlyDoc->modified = TRUE;
                         paintStatusMessage = FALSE;
                     } else if (currentMode == MODE_OPEN_FILE) {
-                        TryLoadFile();
+                        Doc * newDoc = TryLoadFile();
+                        if (newDoc) {
+                            DestroyDoc(onlyDoc);
+                            onlyDoc = newDoc;
+                        }
                     } else if (currentMode == MODE_SAVE_FILE) {
-                        TrySaveFile();
+                        TrySaveFile(&onlyDoc->lines);
                     }
                     break;
                 }
@@ -1247,15 +1592,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 case L'\b':
                 {
                     if (currentMode == MODE_INSERT) {
-                        if (cursorColIndex == 0) {
-                            if (cursorRowIndex != 0) {
-                                TextRow * rowPtr = &textBuffer[cursorRowIndex];
-                                TextRow * prevRowPtr = &textBuffer[cursorRowIndex - 1];
+                        if (onlyDoc->cursorColIndex == 0) {
+                            if (onlyDoc->cursorRowIndex != 0) {
+                                DocLine * rowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex];
+                                DocLine * prevRowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex - 1];
                                 ushort prevOldLength = prevRowPtr->length;
                                 prevRowPtr->length += rowPtr->length;
                                 if (prevRowPtr->length > prevRowPtr->capacity) {
                                     prevRowPtr->capacity += rowPtr->capacity;
-                                    prevRowPtr->text = realloc(prevRowPtr->text, prevRowPtr->capacity * sizeof(wchar_t));
+                                    prevRowPtr->text = (wchar_t *)realloc(prevRowPtr->text, prevRowPtr->capacity * sizeof(wchar_t));
                                 }
 
                                 for (ushort i = 0; i != rowPtr->length; i++) {
@@ -1263,27 +1608,27 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                                 }
                                 free(rowPtr->text);
 
-                                for (ulong i = cursorRowIndex; i != textBufferCount - 1; i++) {
-                                    textBuffer[i] = textBuffer[i + 1];
+                                for (ulong i = onlyDoc->cursorRowIndex; i != onlyDoc->lines.textBufferCount - 1; i++) {
+                                    onlyDoc->lines.textBuffer[i] = onlyDoc->lines.textBuffer[i + 1];
                                 }
-                                textBufferCount--;
+                                onlyDoc->lines.textBufferCount--;
 
-                                cursorRowIndex--;
-                                cursorColIndex = prevRowPtr->length;
+                                onlyDoc->cursorRowIndex--;
+                                onlyDoc->cursorColIndex = prevRowPtr->length;
 
-                                modified = TRUE;
+                                onlyDoc->modified = TRUE;
                             }
                         } else {
-                            TextRow * rowPtr = &textBuffer[cursorRowIndex];
-                            for (ushort i = cursorColIndex; i != rowPtr->length; i++) {
+                            DocLine * rowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex];
+                            for (ushort i = onlyDoc->cursorColIndex; i != rowPtr->length; i++) {
                                 rowPtr->text[i - 1] = rowPtr->text[i];
                             }
-                            cursorColIndex--;
+                            onlyDoc->cursorColIndex--;
                             rowPtr->length--;
 
-                            modified = TRUE;
+                            onlyDoc->modified = TRUE;
                         }
-                        UpdateColDrawIndex();
+                        UpdateColDrawIndex(onlyDoc);
                         paintStatusMessage = FALSE;
                     } else {
                         if (statusCursorCol != 0) {
@@ -1319,7 +1664,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     paintStatusMessage = FALSE;
                     currentMode = MODE_SAVE_FILE;
                     wcscpy_s(statusInput, MAX_PATH, filePath);
-                    statusInputLength = wcslen(statusInput);
+                    statusInputLength = (ushort)wcslen(statusInput);
                     statusCursorCol = statusInputLength;
                     break;
                 }
@@ -1331,9 +1676,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     }
 
                     if (currentMode == MODE_INSERT) {
-                        InsertChars(&c, 1);
-                        modified = TRUE;
-                        UpdateColDrawIndex();
+                        InsertChars(onlyDoc, &c, 1);
+                        onlyDoc->modified = TRUE;
+                        UpdateColDrawIndex(onlyDoc);
                         paintStatusMessage = FALSE;
                     } else {
                         if (statusInputLength != 2 * MAX_PATH) {
@@ -1348,7 +1693,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 }
             }
 
-            Paint();
+            Paint(onlyDoc);
             InvalidateRect(window, NULL, FALSE);
             return 0;
         }
@@ -1372,23 +1717,68 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     }
 }
 
+static bool DocStreamCallback(void * rawDoc, wchar_t * wc, void ** stopStatus) {
+    Doc * doc = (Doc *)rawDoc;
+    if (doc->cursorColIndex == doc->lines.textBuffer[doc->cursorRowIndex].length) {
+        if (doc->cursorRowIndex == doc->lines.textBufferCount - 1) {
+            return false;
+        }
+
+        *wc = L'\n';
+        doc->cursorRowIndex++;
+        doc->cursorColIndex = 0;
+    } else {
+        *wc = doc->lines.textBuffer[doc->cursorRowIndex].text[doc->cursorColIndex];
+        doc->cursorColIndex++;
+    }
+    return true;
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prevInstance, wchar_t * commandLine, int showCommand) {
-    textBrush = CreateSolidBrush(textColor);
-    backgroundBrush = CreateSolidBrush(backgroundColor);
-    cursorBackgroundBrush = CreateSolidBrush(cursorBackgroundColor);
-    statusBackgroundBrush = CreateSolidBrush(statusBackgroundColor);
-    fileBackgroundBrush = CreateSolidBrush(fileBackgroundColor);
-    promptTextBrush = CreateSolidBrush(promptTextColor);
-    promptBackgroundBrush = CreateSolidBrush(promptBackgroundColor);
+    ConfigInit(&config);
 
-    textBuffer = malloc(TEXTBUFFER_GROW_COUNT * sizeof(TextRow));
-    textBufferCount = 1;
-    textBufferCapacity = TEXTBUFFER_GROW_COUNT;
+    wchar_t * appDataFolderPath;
+    SHGetKnownFolderPath(
+        FOLDERID_RoamingAppData,
+        KF_FLAG_DEFAULT,
+        NULL,
+        &appDataFolderPath);
+    wchar_t configFilePath[MAX_PATH];
+    swprintf_s(configFilePath, MAX_PATH, L"%s\\MKedit\\Config.cfg", appDataFolderPath);
+    CoTaskMemFree(appDataFolderPath);
 
-    TextRow * row = &textBuffer[0];
-    row->text = malloc(INIT_ROW_CAPACITY * sizeof(wchar_t));
-    row->length = 0;
-    row->capacity = INIT_ROW_CAPACITY;
+    Doc * configDoc = TryLoadFilePath(configFilePath, true);
+    if (configDoc) {
+        bool loadConfStatus;
+        MkConfGenLoadError * loadConfErrors;
+        ulong loadConfErrorCount;
+        ConfigLoad(
+            &config,
+            configDoc,
+            DocStreamCallback,
+            (void **)&loadConfStatus,
+            &loadConfErrors,
+            &loadConfErrorCount);
+        if (loadConfErrorCount != 0) {
+            free(loadConfErrors);
+        }
+        DestroyDoc(configDoc);
+    }
+
+    tabSpaces = (wchar_t *)malloc(config.tabWidth * sizeof(wchar_t));
+    for (unsigned i = 0; i != config.tabWidth; i++) {
+        tabSpaces[i] = L' ';
+    }
+
+    textBrush = CreateSolidBrush(config.textColor);
+    backgroundBrush = CreateSolidBrush(config.backgroundColor);
+    cursorBrush = CreateSolidBrush(config.cursorColor);
+    statusBackgroundBrush = CreateSolidBrush(config.statusBackgroundColor);
+    docTitleBackgroundBrush = CreateSolidBrush(config.docTitleBackgroundColor);
+    promptTextBrush = CreateSolidBrush(config.promptTextColor);
+    promptBackgroundBrush = CreateSolidBrush(config.promptBackgroundColor);
+
+    onlyDoc = CreateEmptyDoc();
 
     GetCurrentDirectoryW(MAX_PATH, workingFolderPath);
 

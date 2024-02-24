@@ -1,6 +1,9 @@
 *.user
 
-.vs
+.vs/
 
-[Dd]ebug
-[Rr]elease
+[Dd]ebug/
+[Rr]elease/
+
+MkEdit/Generated/
+MkEdit/Import/

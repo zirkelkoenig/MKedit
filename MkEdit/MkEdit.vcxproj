@@ -55,7 +55,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
-      <AdditionalDependencies>ucrtd.lib;vcruntimed.lib;msvcrtd.lib;kernel32.lib;gdi32.lib;user32.lib</AdditionalDependencies>
+      <AdditionalDependencies>ucrtd.lib;vcruntimed.lib;msvcrtd.lib;kernel32.lib;gdi32.lib;user32.lib;ole32.lib;shell32.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -74,11 +74,18 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
-      <AdditionalDependencies>ucrt.lib;vcruntime.lib;msvcrt.lib;kernel32.lib;gdi32.lib;user32.lib</AdditionalDependencies>
+      <AdditionalDependencies>ucrt.lib;vcruntime.lib;msvcrt.lib;kernel32.lib;gdi32.lib;user32.lib;ole32.lib;shell32.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="MKedit.c" />
+    <ClCompile Include="Config.cpp" />
+    <ClCompile Include="Generated\ConfigGen.cpp" />
+    <ClCompile Include="Import\MkConfGen.cpp" />
+    <ClCompile Include="MKedit.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Generated\ConfigGen.h" />
+    <ClInclude Include="Import\MkConfGen.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

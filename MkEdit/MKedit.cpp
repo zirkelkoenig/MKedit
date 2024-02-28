@@ -9,6 +9,8 @@
 #include <wctype.h>
 
 #include "Generated/ConfigGen.h"
+#include "Import/MkList.h"
+#include "Import/MkString.h"
 
 typedef unsigned char byte;
 typedef unsigned short ushort;
@@ -405,108 +407,46 @@ void TrySaveFile(DocLines * docLinesPtr) {
         return;
     }
 
+    auto writeCallback = [](void * stream, const byte * buffer, ulong count, void * status) {
+        ulong writeCount;
+        bool result = WriteFile(
+            (HANDLE)stream,
+            buffer,
+            count,
+            &writeCount,
+            nullptr);
+        if (result) {
+            return true;
+        } else {
+            ulong * errorPtr = (ulong *)status;
+            *errorPtr = GetLastError();
+            return false;
+        }
+    };
+
+    ulong status;
+    for (ulong i = 0; i != docLinesPtr->textBufferCount; i++) {
+        MkWriteUtf8Stream(
+            writeCallback,
+            file,
+            &status,
+            docLinesPtr->textBuffer[i].text,
+            docLinesPtr->textBuffer[i].length,
+            true);
+        MkWriteUtf8Stream(
+            writeCallback,
+            file,
+            &status,
+            L"\n",
+            1,
+            true);
+    }
+
     wcscpy_s(filePath, MAX_PATH, statusInput);
     currentMode = MODE_INSERT;
 
-    DocLine * rowPtr = &docLinesPtr->textBuffer[0];
-    byte output[4];
-    ushort outputCount;
-    ulong c;
-    ulong currentCount;
-
-    byte newline[] = { 0x0d, 0x0a };
-
-    for (ushort j = 0; j != rowPtr->length; j++) {
-        outputCount = 0;
-        c = rowPtr->text[j];
-
-        if (c <= 0x007f) {
-            output[0] = (byte)c;
-            outputCount = 1;
-        } else if (c <= 0x07ff) {
-            output[0] = (byte)((c >> 6) + 0b11000000);
-            output[1] = (byte)((c & 0b00111111) + 0b10000000);
-            outputCount = 2;
-        } else if (c <= 0xffff) {
-            output[0] = (byte)((c >> 12) + 0b11100000);
-            output[1] = (byte)((c >> 6 & 0b00111111) + 0b10000000);
-            output[2] = (byte)((c & 0b00111111) + 0b10000000);
-            outputCount = 3;
-        } else if (c <= 0x0010ffff) {
-            output[0] = (byte)((c >> 18) + 0b11110000);
-            output[1] = (byte)((c >> 12 & 0b00111111) + 0b10000000);
-            output[2] = (byte)((c >> 6 & 0b00111111) + 0b10000000);
-            output[3] = (byte)((c & 0b00111111) + 0b10000000);
-            outputCount = 4;
-        } else {
-            // 0xFFFD
-            output[0] = 0b11101111;
-            output[1] = 0b10111111;
-            output[2] = 0b10111101;
-            outputCount = 3;
-        }
-
-        WriteFile(file, output, outputCount, &currentCount, NULL);
-    }
-
-    for (ulong i = 1; i != docLinesPtr->textBufferCount; i++) {
-        rowPtr = &docLinesPtr->textBuffer[i];
-        WriteFile(file, newline, 2, &currentCount, NULL);
-
-        for (ushort j = 0; j != rowPtr->length; j++) {
-            outputCount = 0;
-            c = rowPtr->text[j];
-
-            if (c <= 0x007f) {
-                output[0] = (byte)c;
-                outputCount = 1;
-            } else if (c <= 0x07ff) {
-                output[0] = (byte)((c >> 6) + 0b11000000);
-                output[1] = (byte)((c & 0b00111111) + 0b10000000);
-                outputCount = 2;
-            } else if (c <= 0xffff) {
-                output[0] = (byte)((c >> 12) + 0b11100000);
-                output[1] = (byte)((c >> 6 & 0b00111111) + 0b10000000);
-                output[2] = (byte)((c & 0b00111111) + 0b10000000);
-                outputCount = 3;
-            } else if (c <= 0x0010ffff) {
-                output[0] = (byte)((c >> 18) + 0b11110000);
-                output[1] = (byte)((c >> 12 & 0b00111111) + 0b10000000);
-                output[2] = (byte)((c >> 6 & 0b00111111) + 0b10000000);
-                output[3] = (byte)((c & 0b00111111) + 0b10000000);
-                outputCount = 4;
-            } else {
-                // 0xFFFD
-                output[0] = 0b11101111;
-                output[1] = 0b10111111;
-                output[2] = 0b10111101;
-                outputCount = 3;
-            }
-
-            WriteFile(file, output, outputCount, &currentCount, NULL);
-        }
-    }
-
     CloseHandle(file);
 }
-
-void AppendChar(DocLine * rowPtr, wchar_t c) {
-    if (rowPtr->length == rowPtr->capacity) {
-        rowPtr->capacity *= 2;
-        rowPtr->text = (wchar_t *)realloc(rowPtr->text, rowPtr->capacity * sizeof(wchar_t));
-    }
-    rowPtr->text[rowPtr->length++] = c;
-}
-
-enum Utf8State {
-    UTF8_START,
-    UTF8_END_OK,
-    UTF8_END_ERROR,
-    UTF8_READ_1,
-    UTF8_READ_2,
-    UTF8_READ_3,
-    UTF8_READ_ERROR,
-};
 
 Doc * TryLoadFilePath(wchar_t * filePath, bool appendNull);
 
@@ -522,9 +462,9 @@ Doc * TryLoadFile() {
     return result;
 }
 
-Doc * TryLoadFilePath(wchar_t * filePath, bool appendNull) {
+Doc * TryLoadFilePath(wchar_t * loadFilePath, bool appendNull) {
     HANDLE file = CreateFileW(
-        filePath,
+        loadFilePath,
         GENERIC_READ,
         FILE_SHARE_READ,
         NULL,
@@ -534,152 +474,48 @@ Doc * TryLoadFilePath(wchar_t * filePath, bool appendNull) {
     if (file == INVALID_HANDLE_VALUE) {
         return NULL;
     }
+    LARGE_INTEGER fileSize;
+    GetFileSizeEx(file, &fileSize);
 
-    wcscpy_s(filePath, MAX_PATH, statusInput);
+    byte * rawInput = (byte *)malloc(fileSize.QuadPart);
 
-    Doc * docPtr = CreateEmptyDoc();
-    DocLines * docLines = &docPtr->lines;
-    DocLine * rowPtr = &docLines->textBuffer[0];
-
-    currentMode = MODE_INSERT;
-
-    bool limited = sizeof(wchar_t) < 4;
-    
-    Utf8State state = UTF8_START;
-    ulong c;
-    byte currentByte;
-    ulong currentCount;
-    ReadFile(file, &currentByte, 1, &currentCount, NULL);
-    bool lastWasNewline = FALSE;
-    while (currentCount != 0 || state == UTF8_END_OK || state == UTF8_END_ERROR) {
-        switch (state) {
-            case UTF8_START:
-            {
-                if ((currentByte & 0b10000000) == 0b00000000) {
-                    c = currentByte;
-                    ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                    state = UTF8_END_OK;
-                } else if ((currentByte & 0b11000000) == 0b10000000) {
-                    ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                    state = UTF8_READ_ERROR;
-                } else if ((currentByte & 0b11100000) == 0b11000000) {
-                    c = (currentByte & 0b00011111) << 6;
-                    ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                    state = UTF8_READ_1;
-                } else if ((currentByte & 0b11110000) == 0b11100000) {
-                    c = (currentByte & 0b00001111) << 12;
-                    ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                    state = UTF8_READ_2;
-                } else if ((currentByte & 0b11111000) == 0b11110000) {
-                    c = (currentByte & 0b00000111) << 18;
-                    ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                    state = UTF8_READ_3;
-                } else {
-                    ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                    state = UTF8_END_ERROR;
-                }
-                break;
-            }
-
-            case UTF8_END_OK:
-            {
-                if (lastWasNewline) {
-                    lastWasNewline = FALSE;
-                    if (c == L'\n') {
-                        state = UTF8_START;
-                        break;
-                    }
-                }
-
-                if (c > 0xffff && limited) {
-                    AppendChar(rowPtr, 0xfffd);
-                } else if (c == L'\0') {
-                    currentCount = 0;
-                } else if (c == L'\n' || c == L'\r') {
-                    if (appendNull) {
-                        AppendChar(rowPtr, L'\0');
-                        rowPtr->length--;
-                    }
-
-                    if (docLines->textBufferCount == docLines->textBufferCapacity) {
-                        docLines->textBufferCapacity += TEXTBUFFER_GROW_COUNT;
-                        docLines->textBuffer = (DocLine *)realloc(docLines->textBuffer, docLines->textBufferCapacity * sizeof(DocLine));
-                    }
-                    rowPtr = &docLines->textBuffer[docLines->textBufferCount++];
-
-                    rowPtr->length = 0;
-                    rowPtr->capacity = INIT_ROW_CAPACITY;
-                    rowPtr->text = (wchar_t *)malloc(INIT_ROW_CAPACITY * sizeof(wchar_t));
-                    lastWasNewline = c == L'\r';
-                } else {
-                    AppendChar(rowPtr, (wchar_t)c);
-                }
-                state = UTF8_START;
-                break;
-            }
-
-            case UTF8_END_ERROR:
-            {
-                AppendChar(rowPtr, 0xfffd);
-                state = UTF8_START;
-                break;
-            }
-
-            case UTF8_READ_1:
-            {
-                if ((currentByte & 0b11000000) == 0b10000000) {
-                    c += currentByte & 0b00111111;
-                    state = UTF8_END_OK;
-                } else {
-                    state = UTF8_END_ERROR;
-                }
-                ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                break;
-            }
-
-            case UTF8_READ_2:
-            {
-                if ((currentByte & 0b11000000) == 0b10000000) {
-                    c += (currentByte & 0b00111111) << 6;
-                    state = UTF8_READ_1;
-                } else {
-                    state = UTF8_END_ERROR;
-                }
-                ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                break;
-            }
-
-            case UTF8_READ_3:
-            {
-                if ((currentByte & 0b11000000) == 0b10000000) {
-                    c += (currentByte & 0b00111111) << 12;
-                    state = UTF8_READ_2;
-                } else {
-                    state = UTF8_END_ERROR;
-                }
-                ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                break;
-            }
-
-            case UTF8_READ_ERROR:
-            {
-                if ((currentByte & 0b11000000) != 0b10000000) {
-                    state = UTF8_END_ERROR;
-                }
-                ReadFile(file, &currentByte, 1, &currentCount, NULL);
-                break;
-            }
-        }
-    }
-    if (state != UTF8_START) {
-        AppendChar(rowPtr, 0xfffd);
-    }
-    if (appendNull) {
-        AppendChar(rowPtr, L'\0');
-        rowPtr->length--;
-    }
+    ulong bytesRead;
+    ReadFile(
+        file,
+        rawInput,
+        (ulong)fileSize.QuadPart,
+        &bytesRead,
+        nullptr);
 
     CloseHandle(file);
+
+    MkList inputLines;
+    MkListInit(&inputLines, TEXTBUFFER_GROW_COUNT, sizeof(MkList));
+    MkReadUtf8StreamToLines(rawInput, (ulong)fileSize.QuadPart, &inputLines);
+
+    free(rawInput);
+
+    Doc * docPtr = (Doc *)malloc(sizeof(Doc));
+    docPtr->lines.textBufferCount = inputLines.count;
+    docPtr->lines.textBufferCapacity = inputLines.capacity;
+    docPtr->lines.textBuffer = (DocLine *)malloc(inputLines.capacity * sizeof(DocLine));
+    for (ulong i = 0; i != inputLines.count; i++) {
+        MkList * inputLinePtr = (MkList *)MkListGet(&inputLines, i);
+        DocLine * docLinePtr = &docPtr->lines.textBuffer[i];
+        docLinePtr->length = inputLinePtr->count;
+        docLinePtr->capacity = inputLinePtr->capacity;
+        docLinePtr->text = (wchar_t *)inputLinePtr->elems;
+    }
+    docPtr->cursorRowIndex = 0;
+    docPtr->cursorColIndex = 0;
+    docPtr->cursorColLastDrawIndex = 0;
+    docPtr->topDrawRowIndex = 0;
+    docPtr->lastDrawRowCount = 0;
+    docPtr->modified = false;
+    MkListClear(&inputLines);
+
+    wcscpy_s(filePath, MAX_PATH, statusInput);
+    currentMode = MODE_INSERT;
     return docPtr;
 }
 
@@ -1747,22 +1583,49 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prevInstance, wchar_t * comman
     swprintf_s(configFilePath, MAX_PATH, L"%s\\MKedit\\Config.cfg", appDataFolderPath);
     CoTaskMemFree(appDataFolderPath);
 
-    Doc * configDoc = TryLoadFilePath(configFilePath, true);
-    if (configDoc) {
-        bool loadConfStatus;
-        MkConfGenLoadError * loadConfErrors;
-        ulong loadConfErrorCount;
-        ConfigLoad(
-            &config,
-            configDoc,
-            DocStreamCallback,
-            (void **)&loadConfStatus,
-            &loadConfErrors,
-            &loadConfErrorCount);
-        if (loadConfErrorCount != 0) {
-            free(loadConfErrors);
+    {
+        HANDLE configFile = CreateFileW(
+            configFilePath,
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_SEQUENTIAL_SCAN,
+            nullptr);
+        if (configFile != INVALID_HANDLE_VALUE) {
+            LARGE_INTEGER configFileSize;
+            GetFileSizeEx(configFile, &configFileSize);
+
+            byte * rawInput = (byte *)malloc(configFileSize.QuadPart);
+            ulong bytesRead;
+            ReadFile(
+                configFile,
+                rawInput,
+                (ulong)configFileSize.QuadPart,
+                &bytesRead,
+                nullptr);
+            CloseHandle(configFile);
+
+            MkList configFileContent;
+            MkListInit(&configFileContent, 16, sizeof(wchar_t));
+            MkReadUtf8Stream(rawInput, (ulong)configFileSize.QuadPart, &configFileContent);
+            free(rawInput);
+
+            MkConfGenLoadError * configErrors;
+            ulong configErrorCount;
+
+            ConfigLoad(
+                &config,
+                (wchar_t *)MkListGet(&configFileContent, 0),
+                configFileContent.count,
+                &configErrors,
+                &configErrorCount);
+            if (configErrorCount != 0) {
+                free(configErrors);
+            }
+
+            MkListClear(&configFileContent);
         }
-        DestroyDoc(configDoc);
     }
 
     tabSpaces = (wchar_t *)malloc(config.tabWidth * sizeof(wchar_t));

@@ -28,7 +28,7 @@ MKCONFGEN_ITEM_UINT(cursorColor, 0x7d7d7d)
 MKCONFGEN_ITEM_UINT(statusBackgroundColor, 0x2e2e2e)
 MKCONFGEN_ITEM_UINT(docTitleBackgroundColor, 0x3d3d3d)
 MKCONFGEN_ITEM_UINT(promptTextColor, 0xffffff)
-MKCONFGEN_ITEM_UINT(promptBackgroundColor, 0x861b2d)
+MKCONFGEN_ITEM_UINT(promptBackgroundColor, 0x2d1b86)
 
 MKCONFGEN_VALIDATE(textColor, ValidateColor)
 MKCONFGEN_VALIDATE(backgroundColor, ValidateColor)

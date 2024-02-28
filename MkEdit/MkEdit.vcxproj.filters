@@ -9,6 +9,12 @@
     <ClCompile Include="Generated\ConfigGen.cpp">
       <Filter>Generated</Filter>
     </ClCompile>
+    <ClCompile Include="Import\MkList.cpp">
+      <Filter>Import</Filter>
+    </ClCompile>
+    <ClCompile Include="Import\MkString.cpp">
+      <Filter>Import</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Import">
@@ -24,6 +30,12 @@
     </ClInclude>
     <ClInclude Include="Generated\ConfigGen.h">
       <Filter>Generated</Filter>
+    </ClInclude>
+    <ClInclude Include="Import\MkList.h">
+      <Filter>Import</Filter>
+    </ClInclude>
+    <ClInclude Include="Import\MkString.h">
+      <Filter>Import</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

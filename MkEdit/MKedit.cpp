@@ -1536,6 +1536,16 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 
         case WM_CLOSE:
         {
+            if (onlyDoc->modified) {
+                int promptResult = MessageBoxW(
+                    window,
+                    L"The current document contains unsaved changes. Close anyway?",
+                    L"Warning",
+                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+                if (promptResult != IDYES) {
+                    return 0;
+                }
+            }
             DestroyWindow(window);
             return 0;
         }

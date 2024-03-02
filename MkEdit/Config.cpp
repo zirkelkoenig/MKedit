@@ -17,7 +17,6 @@ MKCONFGEN_ITEM_WSTR(fontName, 32, L"Consolas")
 MKCONFGEN_ITEM_INT(fontSize, 10)
 MKCONFGEN_ITEM_UINT(tabWidth, 4)
 MKCONFGEN_ITEM_INT(expandTabs, 0)
-MKCONFGEN_ITEM_INT(useVimMode, 0)
 
 MKCONFGEN_VALIDATE(fontSize, ValidateFontSize)
 

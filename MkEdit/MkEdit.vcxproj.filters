@@ -9,10 +9,11 @@
     <ClCompile Include="Generated\ConfigGen.cpp">
       <Filter>Generated</Filter>
     </ClCompile>
-    <ClCompile Include="Import\MkList.cpp">
+    <ClCompile Include="Import\MkString.cpp">
       <Filter>Import</Filter>
     </ClCompile>
-    <ClCompile Include="Import\MkString.cpp">
+    <ClCompile Include="Base.cpp" />
+    <ClCompile Include="Import\MkList.cpp">
       <Filter>Import</Filter>
     </ClCompile>
   </ItemGroup>
@@ -31,10 +32,11 @@
     <ClInclude Include="Generated\ConfigGen.h">
       <Filter>Generated</Filter>
     </ClInclude>
-    <ClInclude Include="Import\MkList.h">
+    <ClInclude Include="Import\MkString.h">
       <Filter>Import</Filter>
     </ClInclude>
-    <ClInclude Include="Import\MkString.h">
+    <ClInclude Include="Base.h" />
+    <ClInclude Include="Import\MkList.h">
       <Filter>Import</Filter>
     </ClInclude>
   </ItemGroup>

@@ -11,1137 +11,9 @@
 #include "Generated/ConfigGen.h"
 #include "Import/MkList.h"
 #include "Import/MkString.h"
+#include "Base.h"
 
-typedef unsigned char byte;
-typedef unsigned short ushort;
-typedef unsigned long ulong;
-
-const ulong maxRows = ULONG_MAX;
-const ushort maxRowLength = USHRT_MAX;
-
-Config config;
-
-//---------------------
-// RUNTIME CONSTANTS
-
-HBRUSH textBrush;
-HBRUSH backgroundBrush;
-HBRUSH cursorBrush;
-HBRUSH statusBackgroundBrush;
-HBRUSH docTitleBackgroundBrush;
-HBRUSH promptTextBrush;
-HBRUSH promptBackgroundBrush;
-
-wchar_t * tabSpaces;
-
-//--------------------------
-// BASIC DATA STRUCTURES
-
-#define INIT_ROW_CAPACITY 4
-#define TEXTBUFFER_GROW_COUNT 16
-
-struct DocLine {
-    ushort length;
-    ushort capacity;
-    wchar_t * text;
-};
-
-struct DocLines {
-    ulong textBufferCount;
-    ulong textBufferCapacity;
-    DocLine * textBuffer;
-};
-
-struct Doc {
-    DocLines lines;
-    ulong cursorRowIndex;
-    ushort cursorColIndex;
-    ulong cursorColLastDrawIndex;
-    ulong topDrawRowIndex;
-    ulong lastDrawRowCount;
-    bool modified;
-};
-
-Doc * CreateEmptyDoc() {
-    Doc * docPtr = (Doc *)malloc(sizeof(Doc));
-    memset(docPtr, 0, sizeof(Doc));
-
-    docPtr->lines.textBufferCount = 1;
-    docPtr->lines.textBufferCapacity = TEXTBUFFER_GROW_COUNT;
-    docPtr->lines.textBuffer = (DocLine *)malloc(TEXTBUFFER_GROW_COUNT * sizeof(DocLine));
-
-    DocLine * linePtr = &docPtr->lines.textBuffer[0];
-    linePtr->length = 0;
-    linePtr->capacity = INIT_ROW_CAPACITY;
-    linePtr->text = (wchar_t *)malloc(INIT_ROW_CAPACITY * sizeof(wchar_t));
-
-    return docPtr;
-}
-
-void DestroyDoc(Doc * docPtr) {
-    for (ulong i = 0; i != docPtr->lines.textBufferCount; i++) {
-        free(docPtr->lines.textBuffer[i].text);
-    }
-    free(docPtr->lines.textBuffer);
-    free(docPtr);
-}
-
-Doc * onlyDoc;
-
-bool fontSet;
-long lineHeight;
-long avgCharWidth;
-
-enum VimMode {
-    MODE_VIM_NORMAL,
-    MODE_VIM_INSERT,
-};
-
-VimMode currentVimMode = MODE_VIM_NORMAL;
-
-bool paintStatusMessage;
-
-void UpdateColDrawIndex(Doc * doc) {
-    wchar_t * text = doc->lines.textBuffer[doc->cursorRowIndex].text;
-    doc->cursorColLastDrawIndex = 0;
-    for (ushort i = 0; i != doc->cursorColIndex; i++) {
-        if (text[i] == L'\t') {
-            doc->cursorColLastDrawIndex += config.tabWidth;
-        } else {
-            doc->cursorColLastDrawIndex++;
-        }
-    }
-}
-
-void ApplyColDrawIndex(Doc * doc) {
-    DocLine * rowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
-    ulong cursorColDrawIndex = 0;
-    for (doc->cursorColIndex = 0; doc->cursorColIndex != rowPtr->length; doc->cursorColIndex++) {
-        if (cursorColDrawIndex >= doc->cursorColLastDrawIndex) {
-            if (cursorColDrawIndex > doc->cursorColLastDrawIndex) {
-                doc->cursorColIndex--;
-            }
-            break;
-        }
-
-        if (rowPtr->text[doc->cursorColIndex] == L'\t') {
-            cursorColDrawIndex += config.tabWidth;
-        } else {
-            cursorColDrawIndex++;
-        }
-    }
-}
-
-bool ProcessKeydownVimNormal(WPARAM wparam) {
-    switch (wparam) {
-        default:
-        {
-            return FALSE;
-        }
-    }
-}
-
-bool ProcessKeydownVimInsert(WPARAM wparam) {
-    switch (wparam) {
-        default:
-        {
-            return FALSE;
-        }
-    }
-}
-
-bool ProcessKeydownVim(WPARAM wparam) {
-    switch (currentVimMode) {
-        case MODE_VIM_NORMAL:
-            return ProcessKeydownVimNormal(wparam);
-
-        default:
-            return FALSE;
-    }
-}
-
-bool ProcessCharVimNormal(Doc * doc, wchar_t wc) {
-    switch (wc) {
-        case L'h':
-        {
-            if (doc->cursorColIndex != 0) {
-                doc->cursorColIndex--;
-            }
-            UpdateColDrawIndex(doc);
-            paintStatusMessage = FALSE;
-            return TRUE;
-        }
-
-        case L'l':
-        {
-            ushort rowLength = doc->lines.textBuffer[doc->cursorRowIndex].length;
-            if (rowLength != 0 && doc->cursorColIndex != rowLength - 1) {
-                doc->cursorColIndex++;
-            }
-            UpdateColDrawIndex(doc);
-            paintStatusMessage = FALSE;
-            return TRUE;
-        }
-
-        case L'k':
-        {
-            if (doc->cursorRowIndex != 0) {
-                doc->cursorRowIndex--;
-                ApplyColDrawIndex(doc);
-            }
-            paintStatusMessage = FALSE;
-            return TRUE;
-        }
-
-        case L'j':
-        {
-            if (doc->cursorRowIndex != doc->lines.textBufferCount - 1) {
-                doc->cursorRowIndex++;
-                ApplyColDrawIndex(doc);
-            }
-            paintStatusMessage = FALSE;
-            return TRUE;
-        }
-
-        case L'0':
-        {
-            doc->cursorColIndex = 0;
-            doc->cursorColLastDrawIndex = 0;
-            paintStatusMessage = FALSE;
-            return TRUE;
-        }
-
-        case L'$':
-        {
-            ushort rowLength = doc->lines.textBuffer[doc->cursorRowIndex].length;
-            if (rowLength != 0) {
-                doc->cursorColIndex = rowLength - 1;
-            }
-            UpdateColDrawIndex(doc);
-            paintStatusMessage = FALSE;
-            return TRUE;
-        }
-
-        case L'i':
-        {
-            currentVimMode = MODE_VIM_INSERT;
-            paintStatusMessage = FALSE;
-            return TRUE;
-        }
-
-        default:
-        {
-            return FALSE;
-        }
-    }
-}
-
-void InsertChars(Doc * doc, wchar_t * wcs, ushort count) {
-    DocLine * rowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
-    rowPtr->length += count;
-
-    bool grow = FALSE;
-    while (rowPtr->length > rowPtr->capacity) {
-        rowPtr->capacity *= 2;
-        grow = TRUE;
-    }
-    if (grow) {
-        rowPtr->text = (wchar_t *)realloc(rowPtr->text, rowPtr->capacity * sizeof(wchar_t));
-    }
-
-    for (ushort i = rowPtr->length - 1; i != doc->cursorColIndex + count - 1; i--) {
-        rowPtr->text[i] = rowPtr->text[i - count];
-    }
-    for (ushort i = 0; i != count; i++) {
-        rowPtr->text[doc->cursorColIndex++] = wcs[i];
-    }
-}
-
-bool ProcessCharVimInsert(Doc * doc, wchar_t wc) {
-    switch (wc) {
-        case L'\t':
-        {
-            if (config.expandTabs) {
-                InsertChars(doc, tabSpaces, config.tabWidth);
-            } else {
-                InsertChars(doc, &wc, 1);
-            }
-            UpdateColDrawIndex(doc);
-            paintStatusMessage = FALSE;
-            doc->modified = TRUE;
-            return TRUE;
-        }
-
-        case L'\r':
-        {
-            if (doc->lines.textBufferCount == doc->lines.textBufferCapacity) {
-                doc->lines.textBufferCapacity += TEXTBUFFER_GROW_COUNT;
-                doc->lines.textBuffer = (DocLine *)realloc(doc->lines.textBuffer, doc->lines.textBufferCapacity * sizeof(DocLine));
-            }
-            doc->lines.textBufferCount++;
-            for (ulong i = doc->lines.textBufferCount - 1; i != doc->cursorRowIndex + 1; i--) {
-                doc->lines.textBuffer[i] = doc->lines.textBuffer[i - 1];
-            }
-
-            DocLine * curRowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
-            DocLine * nextRowPtr = curRowPtr + 1;
-            nextRowPtr->length = curRowPtr->length - doc->cursorColIndex;
-            nextRowPtr->capacity = curRowPtr->capacity;
-            nextRowPtr->text = (wchar_t *)malloc(nextRowPtr->capacity * sizeof(wchar_t));
-            for (ushort i = 0; i != nextRowPtr->length; i++) {
-                nextRowPtr->text[i] = curRowPtr->text[doc->cursorColIndex + i];
-            }
-            curRowPtr->length = doc->cursorColIndex;
-            doc->cursorRowIndex++;
-            doc->cursorColIndex = 0;
-            doc->cursorColLastDrawIndex = 0;
-
-            paintStatusMessage = FALSE;
-            doc->modified = TRUE;
-            return TRUE;
-        }
-
-        case '\b':
-        {
-            if (doc->cursorColIndex == 0) {
-                if (doc->cursorRowIndex != 0) {
-                    DocLine * curRowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
-                    DocLine * prevRowPtr = curRowPtr - 1;
-                    doc->cursorRowIndex--;
-                    ushort prevLength = prevRowPtr->length;
-                    doc->cursorColIndex = prevLength;
-                    InsertChars(doc, curRowPtr->text, curRowPtr->length);
-                    free(curRowPtr->text);
-                    for (ulong i = doc->cursorRowIndex + 1; i != doc->lines.textBufferCount - 1; i++) {
-                        doc->lines.textBuffer[i] = doc->lines.textBuffer[i + 1];
-                    }
-                    doc->lines.textBufferCount--;
-                    doc->cursorColIndex = prevLength;
-                    doc->modified = TRUE;
-                }
-            } else {
-                doc->cursorColIndex--;
-                DocLine * rowPtr = &doc->lines.textBuffer[doc->cursorRowIndex];
-                for (ushort i = doc->cursorColIndex; i != rowPtr->length - 1; i++) {
-                    rowPtr->text[i] = rowPtr->text[i + 1];
-                }
-                rowPtr->length--;
-                doc->modified = TRUE;
-            }
-
-            UpdateColDrawIndex(doc);
-            paintStatusMessage = FALSE;
-            return TRUE;
-        }
-
-        case 0x1b: // Esc
-        {
-            ushort rowLength = doc->lines.textBuffer[doc->cursorRowIndex].length;
-            if (rowLength != 0 && doc->cursorColIndex == rowLength) {
-                doc->cursorColIndex--;
-                if (doc->cursorColLastDrawIndex != 0) {
-                    doc->cursorColLastDrawIndex--;
-                }
-            }
-            currentVimMode = MODE_VIM_NORMAL;
-            paintStatusMessage = FALSE;
-            return TRUE;
-        }
-
-        default:
-        {
-            if (iswcntrl(wc)) {
-                return FALSE;
-            }
-
-            InsertChars(doc, &wc, 1);
-            UpdateColDrawIndex(doc);
-            paintStatusMessage = FALSE;
-            doc->modified = TRUE;
-            return TRUE;
-        }
-    }
-}
-
-bool ProcessCharVim(Doc * doc, wchar_t wc) {
-    switch (currentVimMode) {
-        case MODE_VIM_NORMAL:
-            return ProcessCharVimNormal(doc, wc);
-
-        case MODE_VIM_INSERT:
-            return ProcessCharVimInsert(doc, wc);
-
-        default:
-            return FALSE;
-    }
-}
-
-enum Mode {
-    MODE_INSERT,
-    MODE_OPEN_FILE,
-    MODE_SAVE_FILE,
-};
-
-wchar_t workingFolderPath[MAX_PATH];
-wchar_t filePath[MAX_PATH];
-Mode currentMode;
-ushort statusCursorCol;
-ushort statusInputLength;
-wchar_t statusInput[2 * MAX_PATH];
-
-void TrySaveFile(DocLines * docLinesPtr) {
-    statusInput[statusInputLength] = L'\0';
-    HANDLE file = CreateFileW(
-        statusInput,
-        GENERIC_WRITE,
-        0,
-        NULL,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL);
-    if (file == INVALID_HANDLE_VALUE) {
-        wcscpy_s(statusInput, 2 * MAX_PATH, L"File could not be saved!");
-        statusInputLength = (ushort)wcslen(statusInput);
-        paintStatusMessage = TRUE;
-        currentMode = MODE_INSERT;
-        return;
-    }
-
-    auto writeCallback = [](void * stream, const byte * buffer, ulong count, void * status) {
-        ulong writeCount;
-        bool result = WriteFile(
-            (HANDLE)stream,
-            buffer,
-            count,
-            &writeCount,
-            nullptr);
-        if (result) {
-            return true;
-        } else {
-            ulong * errorPtr = (ulong *)status;
-            *errorPtr = GetLastError();
-            return false;
-        }
-    };
-
-    ulong status;
-    for (ulong i = 0; i != docLinesPtr->textBufferCount; i++) {
-        MkWriteUtf8Stream(
-            writeCallback,
-            file,
-            &status,
-            docLinesPtr->textBuffer[i].text,
-            docLinesPtr->textBuffer[i].length,
-            true);
-        MkWriteUtf8Stream(
-            writeCallback,
-            file,
-            &status,
-            L"\n",
-            1,
-            true);
-    }
-
-    wcscpy_s(filePath, MAX_PATH, statusInput);
-    currentMode = MODE_INSERT;
-
-    CloseHandle(file);
-}
-
-Doc * TryLoadFilePath(wchar_t * filePath, bool appendNull);
-
-Doc * TryLoadFile() {
-    statusInput[statusInputLength] = L'\0';
-    Doc * result = TryLoadFilePath(statusInput, FALSE);
-    if (!result) {
-        wcscpy_s(statusInput, 2 * MAX_PATH, L"File could not be opened!");
-        statusInputLength = (ushort)wcslen(statusInput);
-        paintStatusMessage = TRUE;
-        currentMode = MODE_INSERT;
-    }
-    return result;
-}
-
-Doc * TryLoadFilePath(wchar_t * loadFilePath, bool appendNull) {
-    HANDLE file = CreateFileW(
-        loadFilePath,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        NULL,
-        OPEN_EXISTING,
-        FILE_FLAG_SEQUENTIAL_SCAN,
-        NULL);
-    if (file == INVALID_HANDLE_VALUE) {
-        return NULL;
-    }
-    LARGE_INTEGER fileSize;
-    GetFileSizeEx(file, &fileSize);
-
-    byte * rawInput = (byte *)malloc(fileSize.QuadPart);
-
-    ulong bytesRead;
-    ReadFile(
-        file,
-        rawInput,
-        (ulong)fileSize.QuadPart,
-        &bytesRead,
-        nullptr);
-
-    CloseHandle(file);
-
-    MkList inputLines;
-    MkListInit(&inputLines, TEXTBUFFER_GROW_COUNT, sizeof(MkList));
-    MkReadUtf8StreamToLines(rawInput, (ulong)fileSize.QuadPart, &inputLines);
-
-    free(rawInput);
-
-    Doc * docPtr = (Doc *)malloc(sizeof(Doc));
-    docPtr->lines.textBufferCount = inputLines.count;
-    docPtr->lines.textBufferCapacity = inputLines.capacity;
-    docPtr->lines.textBuffer = (DocLine *)malloc(inputLines.capacity * sizeof(DocLine));
-    for (ulong i = 0; i != inputLines.count; i++) {
-        MkList * inputLinePtr = (MkList *)MkListGet(&inputLines, i);
-        DocLine * docLinePtr = &docPtr->lines.textBuffer[i];
-        docLinePtr->length = inputLinePtr->count;
-        docLinePtr->capacity = inputLinePtr->capacity;
-        docLinePtr->text = (wchar_t *)inputLinePtr->elems;
-    }
-    docPtr->cursorRowIndex = 0;
-    docPtr->cursorColIndex = 0;
-    docPtr->cursorColLastDrawIndex = 0;
-    docPtr->topDrawRowIndex = 0;
-    docPtr->lastDrawRowCount = 0;
-    docPtr->modified = false;
-    MkListClear(&inputLines);
-
-    wcscpy_s(filePath, MAX_PATH, statusInput);
-    currentMode = MODE_INSERT;
-    return docPtr;
-}
-
-wchar_t * wcschr_s(wchar_t * wcs, ushort length, wchar_t c) {
-    wchar_t * end = wcs + length;
-    while (wcs != end && *wcs != L'\0') {
-        if (*wcs == c) {
-            return wcs;
-        }
-        wcs++;
-    }
-    return NULL;
-}
-
-HDC bitmapDeviceContext;
-ushort bitmapWidth, bitmapHeight;
-
-void PaintCursorRow(
-    RECT * textRectPtr,
-    wchar_t * text,
-    ushort length,
-    ushort colIndex)
-{
-    SIZE extent;
-
-    wchar_t * currentText = text;
-    ushort currentLength = length;
-    wchar_t * nextTabPos = wcschr_s(currentText, currentLength, L'\t');
-    long cursorOffset = colIndex;
-    while (nextTabPos) {
-        ushort nextTabOffset = (ushort)(nextTabPos - currentText);
-        if (cursorOffset < 0 || cursorOffset >= nextTabOffset) {
-            GetTextExtentPoint32W(
-                bitmapDeviceContext,
-                currentText,
-                nextTabOffset,
-                &extent);
-            DrawTextExW(
-                bitmapDeviceContext,
-                currentText,
-                nextTabOffset,
-                textRectPtr,
-                DT_NOCLIP | DT_NOPREFIX,
-                NULL);
-            textRectPtr->left += extent.cx;
-            if (textRectPtr->left >= textRectPtr->right) {
-                break;
-            }
-
-            if (cursorOffset == nextTabOffset) {
-                RECT cursorRect;
-                cursorRect.left = textRectPtr->left;
-                cursorRect.top = textRectPtr->top;
-                cursorRect.right = textRectPtr->left + avgCharWidth;
-                cursorRect.bottom = textRectPtr->top + lineHeight;
-                FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
-            }
-
-            GetTextExtentPoint32W(
-                bitmapDeviceContext,
-                tabSpaces,
-                config.tabWidth,
-                &extent);
-            DrawTextExW(
-                bitmapDeviceContext,
-                tabSpaces,
-                config.tabWidth,
-                textRectPtr,
-                DT_NOCLIP | DT_NOPREFIX,
-                NULL);
-            textRectPtr->left += extent.cx;
-            if (textRectPtr->left >= textRectPtr->right) {
-                break;
-            }
-        } else {
-            GetTextExtentPoint32W(
-                bitmapDeviceContext,
-                currentText,
-                cursorOffset,
-                &extent);
-            DrawTextExW(
-                bitmapDeviceContext,
-                currentText,
-                cursorOffset,
-                textRectPtr,
-                DT_NOCLIP | DT_NOPREFIX,
-                NULL);
-            textRectPtr->left += extent.cx;
-            if (textRectPtr->left >= textRectPtr->right) {
-                break;
-            }
-
-            GetTextExtentPoint32W(
-                bitmapDeviceContext,
-                &currentText[cursorOffset],
-                1,
-                &extent);
-            RECT cursorRect;
-            cursorRect.left = textRectPtr->left;
-            cursorRect.top = textRectPtr->top;
-            cursorRect.right = textRectPtr->left + extent.cx;
-            cursorRect.bottom = textRectPtr->top + lineHeight;
-            FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
-
-            GetTextExtentPoint32W(
-                bitmapDeviceContext,
-                currentText + cursorOffset,
-                nextTabOffset - cursorOffset,
-                &extent);
-            DrawTextExW(
-                bitmapDeviceContext,
-                currentText + cursorOffset,
-                nextTabOffset - cursorOffset,
-                textRectPtr,
-                DT_NOCLIP | DT_NOPREFIX,
-                NULL);
-            textRectPtr->left += extent.cx;
-            if (textRectPtr->left >= textRectPtr->right) {
-                break;
-            }
-
-            GetTextExtentPoint32W(
-                bitmapDeviceContext,
-                tabSpaces,
-                config.tabWidth,
-                &extent);
-            DrawTextExW(
-                bitmapDeviceContext,
-                tabSpaces,
-                config.tabWidth,
-                textRectPtr,
-                DT_NOCLIP | DT_NOPREFIX,
-                NULL);
-            textRectPtr->left += extent.cx;
-            if (textRectPtr->left >= textRectPtr->right) {
-                break;
-            }
-        }
-
-        currentText = nextTabPos + 1;
-        nextTabOffset++;
-        currentLength -= nextTabOffset;
-        cursorOffset -= nextTabOffset;
-        nextTabPos = wcschr_s(currentText, currentLength, L'\t');
-    }
-
-    if (!nextTabPos) {
-        if (cursorOffset == currentLength) {
-            GetTextExtentPoint32W(
-                bitmapDeviceContext,
-                currentText,
-                currentLength,
-                &extent);
-            DrawTextExW(
-                bitmapDeviceContext,
-                currentText,
-                currentLength,
-                textRectPtr,
-                DT_NOCLIP | DT_NOPREFIX,
-                NULL);
-            textRectPtr->left += extent.cx;
-            if (textRectPtr->left < textRectPtr->right) {
-                RECT cursorRect;
-                cursorRect.left = textRectPtr->left;
-                cursorRect.top = textRectPtr->top;
-                cursorRect.right = textRectPtr->left + avgCharWidth;
-                cursorRect.bottom = textRectPtr->top + lineHeight;
-                FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
-            }
-        } else if (cursorOffset >= 0) {
-            GetTextExtentPoint32W(
-                bitmapDeviceContext,
-                currentText,
-                cursorOffset,
-                &extent);
-            DrawTextExW(
-                bitmapDeviceContext,
-                currentText,
-                cursorOffset,
-                textRectPtr,
-                DT_NOCLIP | DT_NOPREFIX,
-                NULL);
-            textRectPtr->left += extent.cx;
-            if (textRectPtr->left < textRectPtr->right) {
-                GetTextExtentPoint32W(
-                    bitmapDeviceContext,
-                    currentText + cursorOffset,
-                    1,
-                    &extent);
-                RECT cursorRect;
-                cursorRect.left = textRectPtr->left;
-                cursorRect.top = textRectPtr->top;
-                cursorRect.right = textRectPtr->left + extent.cx;
-                cursorRect.bottom = textRectPtr->top + lineHeight;
-                FillRect(
-                    bitmapDeviceContext,
-                    &cursorRect,
-                    cursorBrush);
-
-                DrawTextExW(
-                    bitmapDeviceContext,
-                    currentText + cursorOffset,
-                    currentLength - cursorOffset,
-                    textRectPtr,
-                    DT_NOCLIP | DT_NOPREFIX,
-                    NULL);
-            }
-        } else {
-            DrawTextExW(
-                bitmapDeviceContext,
-                currentText,
-                currentLength,
-                textRectPtr,
-                DT_NOCLIP | DT_NOPREFIX,
-                NULL);
-        }
-    }
-}
-
-void Paint(Doc * docPtr) {
-    if (bitmapWidth == 0 || bitmapHeight == 0) {
-        docPtr->lastDrawRowCount = 0;
-        return;
-    }
-
-    RECT clientRect;
-    clientRect.left = 0;
-    clientRect.top = 0;
-    clientRect.right = bitmapWidth;
-    clientRect.bottom = bitmapHeight;
-
-    FillRect(bitmapDeviceContext, &clientRect, backgroundBrush);
-
-    SetTextColor(bitmapDeviceContext, config.textColor);
-    SetBkMode(bitmapDeviceContext, TRANSPARENT);
-
-    ulong drawRowCount = bitmapHeight / lineHeight;
-    if (drawRowCount == 0) {
-        docPtr->lastDrawRowCount = 0;
-        return;
-    }
-    drawRowCount--;
-
-    if (drawRowCount != 0) {
-        wchar_t workingFolderPathLine[MAX_PATH + 32];
-        swprintf_s(workingFolderPathLine, MAX_PATH + 32, L"Working Folder: %s", workingFolderPath);
-
-        RECT workingFolderRect;
-        workingFolderRect.left = clientRect.left;
-        workingFolderRect.top = clientRect.top;
-        workingFolderRect.right = clientRect.right;
-        workingFolderRect.bottom = clientRect.top + lineHeight;
-
-        DrawTextExW(
-            bitmapDeviceContext,
-            workingFolderPathLine,
-            -1,
-            &workingFolderRect,
-            DT_NOCLIP | DT_NOPREFIX,
-            NULL);
-
-        drawRowCount--;
-    }
-
-    if (drawRowCount != 0) {
-        RECT fileRect;
-        fileRect.left = clientRect.left;
-        fileRect.top = clientRect.top + lineHeight;
-        fileRect.right = clientRect.right;
-        fileRect.bottom = fileRect.top + lineHeight;
-        FillRect(bitmapDeviceContext, &fileRect, docTitleBackgroundBrush);
-
-        wchar_t filePathLine[MAX_PATH + 32];
-        if (filePath[0] == L'\0') {
-            if (docPtr->modified) {
-                wcscpy_s(filePathLine, MAX_PATH + 32, L"<UNNAMED> (modified)");
-            } else {
-                wcscpy_s(filePathLine, MAX_PATH + 32, L"<UNNAMED>");
-            }
-        } else {
-            if (docPtr->modified) {
-                swprintf_s(filePathLine, MAX_PATH + 32, L"%s (modified)", filePath);
-            } else {
-                wcscpy_s(filePathLine, MAX_PATH + 32, filePath);
-            }
-        }
-        DrawTextExW(
-            bitmapDeviceContext,
-            filePathLine,
-            -1,
-            &fileRect,
-            DT_NOCLIP | DT_NOPREFIX,
-            NULL);
-
-        drawRowCount--;
-    }
-
-    RECT textRect;
-    textRect.left = clientRect.left;
-    textRect.top = clientRect.top + 2 * lineHeight;
-    textRect.right = clientRect.right;
-    textRect.bottom = clientRect.bottom - lineHeight;
-
-    if (docPtr->cursorRowIndex < docPtr->topDrawRowIndex) {
-        docPtr->topDrawRowIndex = docPtr->cursorRowIndex;
-    }
-    ulong bottomDrawRowIndex = docPtr->topDrawRowIndex + drawRowCount;
-    if (docPtr->cursorRowIndex >= bottomDrawRowIndex) {
-        docPtr->topDrawRowIndex += docPtr->cursorRowIndex - bottomDrawRowIndex + 1;
-        bottomDrawRowIndex = docPtr->cursorRowIndex + 1;
-    } else if (docPtr->topDrawRowIndex != 0 && bottomDrawRowIndex > docPtr->lines.textBufferCount) {
-        ulong diff = bottomDrawRowIndex - docPtr->lines.textBufferCount;
-        if (diff > docPtr->topDrawRowIndex) {
-            docPtr->topDrawRowIndex = 0;
-        } else {
-            docPtr->topDrawRowIndex -= diff;
-        }
-    }
-
-    for (ulong i = docPtr->topDrawRowIndex; i != docPtr->lines.textBufferCount; i++) {
-        if (textRect.bottom - textRect.top < lineHeight) {
-            break;
-        }
-
-        DocLine * rowPtr = &docPtr->lines.textBuffer[i];
-        if (i == docPtr->cursorRowIndex && currentMode == MODE_INSERT) {
-            PaintCursorRow(&textRect, rowPtr->text, rowPtr->length, docPtr->cursorColIndex);
-        } else {
-            wchar_t * currentText = rowPtr->text;
-            ushort currentLength = rowPtr->length;
-            wchar_t * nextTabPos = wcschr_s(currentText, currentLength, L'\t');
-            while (nextTabPos) {
-                SIZE extent;
-                ushort nextTabOffset = (ushort)(nextTabPos - currentText);
-
-                GetTextExtentPoint32W(
-                    bitmapDeviceContext,
-                    currentText,
-                    nextTabOffset,
-                    &extent);
-                DrawTextExW(
-                    bitmapDeviceContext,
-                    currentText,
-                    nextTabOffset,
-                    &textRect,
-                    DT_NOCLIP | DT_NOPREFIX,
-                    NULL);
-                textRect.left += extent.cx;
-                if (textRect.left >= textRect.right) {
-                    break;
-                }
-
-                GetTextExtentPoint32W(
-                    bitmapDeviceContext,
-                    tabSpaces,
-                    config.tabWidth,
-                    &extent);
-                DrawTextExW(
-                    bitmapDeviceContext,
-                    tabSpaces,
-                    config.tabWidth,
-                    &textRect,
-                    DT_NOCLIP | DT_NOPREFIX,
-                    NULL);
-                textRect.left += extent.cx;
-                if (textRect.left >= textRect.right) {
-                    break;
-                }
-
-                nextTabOffset++;
-                currentText = nextTabPos + 1;
-                currentLength -= nextTabOffset;
-                nextTabPos = wcschr_s(currentText, currentLength, L'\t');
-            }
-
-            if (!nextTabPos) {
-                DrawTextExW(
-                    bitmapDeviceContext,
-                    currentText,
-                    currentLength,
-                    &textRect,
-                    DT_NOCLIP | DT_NOPREFIX,
-                    NULL);
-            }
-        }
-
-        textRect.left = 0;
-        textRect.top += lineHeight;
-        docPtr->lastDrawRowCount++;
-    }
-
-    RECT statusRect;
-    statusRect.left = clientRect.left;
-    statusRect.top = clientRect.bottom - lineHeight;
-    statusRect.right = clientRect.right;
-    statusRect.bottom = clientRect.bottom;
-    if (paintStatusMessage) {
-        FillRect(bitmapDeviceContext, &statusRect, promptBackgroundBrush);
-        SetTextColor(bitmapDeviceContext, config.promptTextColor);
-        DrawTextExW(
-            bitmapDeviceContext,
-            statusInput,
-            -1,
-            &statusRect,
-            DT_NOCLIP | DT_NOPREFIX,
-            NULL);
-    } else if (config.useVimMode) {
-        FillRect(bitmapDeviceContext, &statusRect, statusBackgroundBrush);
-
-        ulong rowPercent;
-        if (docPtr->lines.textBufferCount > 1) {
-            rowPercent = (100 * docPtr->cursorRowIndex) / (docPtr->lines.textBufferCount - 1);
-        } else {
-            rowPercent = 0;
-        }
-
-        DocLine * cursorRowPtr = &docPtr->lines.textBuffer[docPtr->cursorRowIndex];
-        ulong cursorColDrawIndex = 0;
-        for (ushort i = 0; i != docPtr->cursorColIndex; i++) {
-            if (cursorRowPtr->text[i] == L'\t') {
-                cursorColDrawIndex += config.tabWidth;
-            } else {
-                cursorColDrawIndex++;
-            }
-        }
-        ulong cursorRowDrawLength = 0;
-        for (ushort i = 0; i != cursorRowPtr->length; i++) {
-            if (cursorRowPtr->text[i] == L'\t') {
-                cursorRowDrawLength += config.tabWidth;
-            } else {
-                cursorRowDrawLength++;
-            }
-        }
-
-        const wchar_t vimNormalText[] = L"[NORMAL]";
-        const wchar_t vimInsertText[] = L"[INSERT]";
-        const wchar_t * vimModeText;
-        if (currentVimMode == MODE_VIM_NORMAL) {
-            vimModeText = vimNormalText;
-        } else {
-            vimModeText = vimInsertText;
-        }
-
-        wchar_t statusLine[256];
-        swprintf_s(
-            statusLine,
-            256,
-            L"%s    Row: %lu/%lu (%lu %%)    Col: %hu/%hu (%lu/%lu)",
-            vimModeText,
-            docPtr->cursorRowIndex + 1,
-            docPtr->lines.textBufferCount,
-            rowPercent,
-            docPtr->cursorColIndex + 1,
-            cursorRowPtr->length,
-            cursorColDrawIndex + 1,
-            cursorRowDrawLength);
-
-        DrawTextExW(
-            bitmapDeviceContext,
-            statusLine,
-            -1,
-            &statusRect,
-            DT_NOCLIP | DT_NOPREFIX,
-            NULL);
-    } else if (currentMode == MODE_INSERT) {
-        FillRect(bitmapDeviceContext, &statusRect, statusBackgroundBrush);
-
-        ulong rowPercent;
-        if (docPtr->lines.textBufferCount > 1) {
-            rowPercent = (100 * docPtr->cursorRowIndex) / (docPtr->lines.textBufferCount - 1);
-        } else {
-            rowPercent = 0;
-        }
-
-        DocLine * cursorRowPtr = &docPtr->lines.textBuffer[docPtr->cursorRowIndex];
-        ulong cursorColDrawIndex = 0;
-        for (ushort i = 0; i != docPtr->cursorColIndex; i++) {
-            if (cursorRowPtr->text[i] == L'\t') {
-                cursorColDrawIndex += config.tabWidth;
-            } else {
-                cursorColDrawIndex++;
-            }
-        }
-        ulong cursorRowDrawLength = 0;
-        for (ushort i = 0; i != cursorRowPtr->length; i++) {
-            if (cursorRowPtr->text[i] == L'\t') {
-                cursorRowDrawLength += config.tabWidth;
-            } else {
-                cursorRowDrawLength++;
-            }
-        }
-
-        wchar_t statusLine[128];
-        swprintf_s(
-            statusLine,
-            128,
-            L"Row: %lu/%lu (%lu %%)    Col: %hu/%hu (%lu/%lu)",
-            docPtr->cursorRowIndex + 1,
-            docPtr->lines.textBufferCount,
-            rowPercent,
-            docPtr->cursorColIndex + 1,
-            cursorRowPtr->length,
-            cursorColDrawIndex + 1,
-            cursorRowDrawLength);
-
-        DrawTextExW(
-            bitmapDeviceContext,
-            statusLine,
-            -1,
-            &statusRect,
-            DT_NOCLIP | DT_NOPREFIX,
-            NULL);
-    } else if (currentMode == MODE_OPEN_FILE) {
-        FillRect(bitmapDeviceContext, &statusRect, promptBackgroundBrush);
-        SetTextColor(bitmapDeviceContext, config.promptTextColor);
-
-        wchar_t statusLine[2 * MAX_PATH + 32] = L"Open: ";
-        ushort prefixOffset = (ushort)wcslen(statusLine);
-        wcsncpy_s(statusLine + prefixOffset, 2 * MAX_PATH, statusInput, statusInputLength);
-        ushort actualCursorCol = statusCursorCol + prefixOffset;
-        PaintCursorRow(&statusRect, statusLine, (ushort)wcslen(statusLine), actualCursorCol);
-    } else if (currentMode == MODE_SAVE_FILE) {
-        FillRect(bitmapDeviceContext, &statusRect, promptBackgroundBrush);
-        SetTextColor(bitmapDeviceContext, config.promptTextColor);
-
-        wchar_t statusLine[2 * MAX_PATH + 32] = L"Save: ";
-        ushort prefixOffset = (ushort)wcslen(statusLine);
-        wcsncpy_s(statusLine + prefixOffset, 2 * MAX_PATH, statusInput, statusInputLength);
-        ushort actualCursorCol = statusCursorCol + prefixOffset;
-        PaintCursorRow(&statusRect, statusLine, (ushort)wcslen(statusLine), actualCursorCol);
-    }
-}
-
-LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
-    switch (message) {
-        case WM_SIZE:
-        {
-            HDC deviceContext = GetDC(window);
-
-            if (!bitmapDeviceContext) {
-                bitmapDeviceContext = CreateCompatibleDC(deviceContext);
-
-                int ppi = GetDeviceCaps(bitmapDeviceContext, LOGPIXELSY);
-                int lfHeight = 0 - ((config.fontSize * ppi) / 72);
-                HFONT font = CreateFontW(
-                    lfHeight,
-                    0,
-                    0,
-                    0,
-                    FW_DONTCARE,
-                    0,
-                    0,
-                    0,
-                    ANSI_CHARSET,
-                    OUT_DEFAULT_PRECIS,
-                    CLIP_DEFAULT_PRECIS,
-                    DEFAULT_QUALITY,
-                    DEFAULT_PITCH | FF_DONTCARE,
-                    config.fontName);
-                HFONT oldFont = (HFONT)SelectObject(bitmapDeviceContext, font);
-                if (oldFont) {
-                    DeleteObject(oldFont);
-                }
-
-                TEXTMETRICW fontMetrics;
-                GetTextMetricsW(bitmapDeviceContext, &fontMetrics);
-                lineHeight = fontMetrics.tmHeight;
-                avgCharWidth = fontMetrics.tmAveCharWidth;
-            }
-
-            bitmapWidth = LOWORD(lparam);
-            bitmapHeight = HIWORD(lparam);
-            HBITMAP bitmap = CreateCompatibleBitmap(deviceContext, bitmapWidth, bitmapHeight);
-            HBITMAP oldBitmap = (HBITMAP)SelectObject(bitmapDeviceContext, bitmap);
-            if (oldBitmap) {
-                DeleteObject(oldBitmap);
-            }
-
-            Paint(onlyDoc);
-            return 0;
-        }
-
-        case WM_PAINT:
-        {
-            PAINTSTRUCT paintStruct;
-            HDC deviceContext = BeginPaint(window, &paintStruct);
-            long x = paintStruct.rcPaint.left;
-            long y = paintStruct.rcPaint.top;
-            long width = paintStruct.rcPaint.right - paintStruct.rcPaint.left;
-            long height = paintStruct.rcPaint.bottom - paintStruct.rcPaint.top;
-
-            bool result = BitBlt(
-                deviceContext,
-                x,
-                y,
-                width,
-                height,
-                bitmapDeviceContext,
-                0,
-                0,
-                SRCCOPY);
-
-            EndPaint(window, &paintStruct);
-            return 0;
-        }
-
-        case WM_KEYDOWN:
-        {
-            if (config.useVimMode) {
-                if (ProcessKeydownVim(wparam)) {
-                    Paint(onlyDoc);
-                    InvalidateRect(window, NULL, FALSE);
-                }
-                return 0;
-            }
-
-            switch (wparam) {
-                case VK_ESCAPE:
-                {
-                    currentMode = MODE_INSERT;
-                    paintStatusMessage = FALSE;
-                    Paint(onlyDoc);
-                    InvalidateRect(window, NULL, FALSE);
-                    break;
-                }
-
+#if false
                 case VK_LEFT:
                 {
                     if (currentMode == MODE_INSERT) {
@@ -1346,200 +218,1365 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     InvalidateRect(window, NULL, FALSE);
                     break;
                 }
+#endif
+
+
+Config config;
+
+bool ReadFileCallback(void * stream, void * buffer, ulong count, void * status) {
+    ulong * error = static_cast<ulong *>(status);
+
+    ulong readCount;
+    if (ReadFile(stream, buffer, count, &readCount, nullptr)) {
+        *error = ERROR_SUCCESS;
+        if (readCount == 0) {
+            return false;
+        } else {
+            return true;
+        }
+    } else {
+        *error = GetLastError();
+        return false;
+    }
+}
+
+// Returns:
+// - RESULT_OK
+// - RESULT_MEMORY_ERROR
+ResultCode LoadConfigFile(const wchar_t filePath[MAX_PATH_COUNT]) {
+    HANDLE file = CreateFileW(
+        filePath,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_SEQUENTIAL_SCAN,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return RESULT_OK;
+    }
+
+    MkList content;
+    MkListInit(&content, 128, sizeof(wchar_t));
+
+    auto writeCallback = [](void * stream, const void * buffer, ulong count, void * status) {
+        MkList * content = static_cast<MkList *>(stream);
+        const wchar_t * wcs = static_cast<const wchar_t *>(buffer);
+
+        wchar_t * newElems = static_cast<wchar_t *>(MkListInsert(content, ULONG_MAX, count));
+        if (!newElems) {
+            return false;
+        }
+        for (ulong i = 0; i != count; i++) {
+            newElems[i] = wcs[i];
+        }
+        return true;
+    };
+
+    ulong readStatus;
+    bool utf8Success = MkUtf8Read(
+        ReadFileCallback, file, &readStatus,
+        writeCallback, &content, nullptr);
+
+    CloseHandle(file);
+
+    if (!utf8Success) {
+        return RESULT_MEMORY_ERROR;
+    }
+
+    MkConfGenLoadError * loadErrors;
+    ulong loadErrorCount;
+    bool loadSuccess = ConfigLoad(&config, static_cast<wchar_t *>(content.elems), content.count, &loadErrors, &loadErrorCount);
+    if (loadErrors) {
+        free(loadErrors);
+    }
+
+    MkListClear(&content);
+
+    if (loadSuccess) {
+        return RESULT_OK;
+    } else {
+        return RESULT_MEMORY_ERROR;
+    }
+}
+
+// Returns:
+// - RESULT_OK
+// - RESULT_FILE_LOCKED - existing file is locked by another process
+// - RESULT_FILE_EXISTS - file with same name already exists or was modified externally
+// - RESULT_FILE_ERROR
+// - RESULT_FILE_NOT_FOUND - file was removed
+ResultCode WriteDoc(Doc * doc, const wchar_t * newPath, bool overwrite) {
+    DWORD disposition;
+    const wchar_t * path;
+    if (newPath) {
+        path = newPath;
+        if (overwrite) {
+            disposition = CREATE_ALWAYS;
+        } else {
+            disposition = CREATE_NEW;
+        }
+    } else {
+        path = doc->title;
+        if (overwrite) {
+            disposition = CREATE_ALWAYS;
+        } else if (doc->timestamp == 0) {
+            disposition = CREATE_NEW;
+        } else {
+            disposition = OPEN_EXISTING;
+        }
+    }
+
+    HANDLE file = CreateFileW(
+        path,
+        GENERIC_WRITE,
+        0,
+        nullptr,
+        disposition,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        ulong error = GetLastError();
+        switch (error) {
+            case ERROR_FILE_EXISTS:
+                return RESULT_FILE_EXISTS;
+
+            case ERROR_FILE_NOT_FOUND:
+                return RESULT_FILE_NOT_FOUND;
+
+            case ERROR_SHARING_VIOLATION:
+                return RESULT_FILE_LOCKED;
+
+            default:
+                return RESULT_FILE_ERROR;
+        }
+    }
+
+    if (disposition == OPEN_EXISTING) {
+        FILETIME fileTimestamp;
+        GetFileTime(file, nullptr, nullptr, &fileTimestamp);
+        ULARGE_INTEGER timestamp;
+        timestamp.LowPart = fileTimestamp.dwLowDateTime;
+        timestamp.HighPart = fileTimestamp.dwHighDateTime;
+        if (timestamp.QuadPart != doc->timestamp) {
+            CloseHandle(file);
+            return RESULT_FILE_EXISTS;
+        }
+    }
+
+    auto writeCallback = [](void * stream, const void * buffer, ulong count, void * status) {
+        ulong writeCount;
+        return static_cast<bool>(WriteFile(stream, buffer, count, &writeCount, nullptr));
+    };
+
+    bool writeSuccess = MkUtf8WriteWcs(
+        doc->content.lines[0].chars, doc->content.lines[0].length, true,
+        writeCallback, file, nullptr);
+    if (!writeSuccess) {
+        CloseHandle(file);
+        return RESULT_FILE_ERROR;
+    }
+
+    for (ulong i = 1; i != doc->content.lineCount; i++) {
+        writeSuccess = MkUtf8WriteWcs(
+            L"\n", 1, true,
+            writeCallback, file, nullptr);
+        if (!writeSuccess) {
+            CloseHandle(file);
+            return RESULT_FILE_ERROR;
+        }
+
+        writeSuccess = MkUtf8WriteWcs(
+            doc->content.lines[i].chars, doc->content.lines[i].length, true,
+            writeCallback, file, nullptr);
+        if (!writeSuccess) {
+            CloseHandle(file);
+            return RESULT_FILE_ERROR;
+        }
+    }
+
+    if (disposition == OPEN_EXISTING) {
+        SetEndOfFile(file);
+    }
+
+    FILETIME fileTimestamp;
+    GetFileTime(file, nullptr, nullptr, &fileTimestamp);
+    ULARGE_INTEGER timestamp;
+    timestamp.LowPart = fileTimestamp.dwLowDateTime;
+    timestamp.HighPart = fileTimestamp.dwHighDateTime;
+    doc->timestamp = timestamp.QuadPart;
+
+    CloseHandle(file);
+    return RESULT_OK;
+}
+
+// Returns:
+// - RESULT_OK
+// - RESULT_MEMORY_ERROR
+// - RESULT_LIMIT_REACHED
+// - RESULT_FILE_ERROR
+// - RESULT_FILE_LOCKED
+// - RESULT_FILE_NOT_FOUND
+ResultCode LoadFile(const wchar_t * path, Doc ** doc) {
+    HANDLE file = CreateFileW(
+        path,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_SEQUENTIAL_SCAN,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        ulong error = GetLastError();
+        switch (error) {
+            case ERROR_SHARING_VIOLATION:
+                return RESULT_FILE_LOCKED;
+
+            case ERROR_FILE_NOT_FOUND:
+                return RESULT_FILE_NOT_FOUND;
+
+            default:
+                return RESULT_FILE_ERROR;
+        }
+    }
+
+    *doc = CreateEmptyDoc();
+    if (!(*doc)) {
+        CloseHandle(file);
+        return RESULT_MEMORY_ERROR;
+    }
+
+    auto writeCallback = [](void * stream, const void * buffer, ulong count, void * status) {
+        Doc * doc = static_cast<Doc *>(stream);
+        const wchar_t * chars = static_cast<const wchar_t *>(buffer);
+        ResultCode * result = static_cast<ResultCode *>(status);
+
+        for (ulong i = 0; i != count; i++) {
+            if (chars[i] == L'\n') {
+                if (doc->content.lineCount == MAX_LINE_COUNT) {
+                    *result = RESULT_LIMIT_REACHED;
+                    return false;
+                }
+
+                if (doc->content.lineCount == doc->content.lineCapacity) {
+                    ulong newCapacity = doc->content.lineCapacity + DOCLINES_GROW_COUNT;
+                    DocLine * newLines = static_cast<DocLine *>(realloc(doc->content.lines, newCapacity * sizeof(DocLine)));
+                    if (!newLines) {
+                        *result = RESULT_MEMORY_ERROR;
+                        return false;
+                    }
+                    doc->content.lineCapacity = newCapacity;
+                    doc->content.lines = newLines;
+                }
+
+                DocLine * line = &doc->content.lines[doc->content.lineCount++];
+                line->length = 0;
+                line->capacity = DOCLINE_INIT_CAPACITY;
+                line->chars = static_cast<wchar_t *>(malloc(line->capacity * sizeof(wchar_t)));
+                if (!line->chars) {
+                    *result = RESULT_MEMORY_ERROR;
+                    return false;
+                }
+            } else {
+                DocLine * line = &doc->content.lines[doc->content.lineCount - 1];
+
+                if (line->length == MAX_LINE_LENGTH) {
+                    *result = RESULT_LIMIT_REACHED;
+                    return false;
+                }
+
+                if (line->length == line->capacity) {
+                    ulong newCapacity = line->capacity * 2;
+                    wchar_t * newChars = static_cast<wchar_t *>(realloc(line->chars, newCapacity * sizeof(wchar_t)));
+                    if (!newChars) {
+                        *result = RESULT_MEMORY_ERROR;
+                        return false;
+                    }
+                    line->capacity = newCapacity;
+                    line->chars = newChars;
+                }
+
+                line->chars[line->length++] = chars[i];
             }
+        }
+
+        return true;
+    };
+
+    ulong readStatus;
+    ResultCode writeStatus;
+    bool readSuccess = MkUtf8Read(
+        ReadFileCallback, file, &readStatus,
+        writeCallback, *doc, &writeStatus);
+    if (!readSuccess) {
+        CloseHandle(file);
+        DestroyDoc(*doc);
+        return writeStatus;
+    }
+
+    FILETIME fileTimestamp;
+    GetFileTime(file, nullptr, nullptr, &fileTimestamp);
+    ULARGE_INTEGER timestamp;
+    timestamp.LowPart = fileTimestamp.dwLowDateTime;
+    timestamp.HighPart = fileTimestamp.dwHighDateTime;
+
+    CloseHandle(file);
+
+    (*doc)->cursorLineIndex = 0;
+    (*doc)->cursorCharIndex = 0;
+    (*doc)->timestamp = timestamp.QuadPart;
+    wcscpy_s((*doc)->title, MAX_PATH_COUNT, path);
+    return RESULT_OK;
+}
+
+wchar_t * tabSpaces;
+
+HBRUSH textBrush;
+HBRUSH backgroundBrush;
+HBRUSH cursorBrush;
+HBRUSH statusBackgroundBrush;
+HBRUSH docTitleBackgroundBrush;
+HBRUSH promptTextBrush;
+HBRUSH promptBackgroundBrush;
+
+enum Mode {
+    MODE_NORMAL,
+    MODE_COMMAND,
+    MODE_INSERT,
+};
+
+Mode currentMode = MODE_NORMAL;
+
+wchar_t workingFolderPath[MAX_PATH];
+Doc * currentDoc;
+bool paintContentCursor = true;
+bool paintStatusCursor = false;
+
+#define MAX_STATUS_COUNT 512
+wchar_t statusLine[MAX_STATUS_COUNT];
+ulong statusLength = 0;
+ulong statusCursorChar = 0;
+bool statusPrompt = false;
+
+void SetStatusLineNormal() {
+    ulong cursorLinePercent;
+    if (currentDoc->content.lineCount > 1) {
+        cursorLinePercent = (100 * currentDoc->cursorLineIndex) / (currentDoc->content.lineCount - 1);
+    } else {
+        cursorLinePercent = 0;
+    }
+
+    DocLine * cursorLine = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+
+    ulong cursorColCount = 0;
+    for (ulong i = 0; i != currentDoc->cursorCharIndex; i++) {
+        if (cursorLine->chars[i] == L'\t') {
+            cursorColCount += config.tabWidth;
+        } else {
+            cursorColCount++;
+        }
+    }
+
+    ulong cursorLineColCount = 0;
+    for (ulong i = 0; i != cursorLine->length; i++) {
+        if (cursorLine->chars[i] == L'\t') {
+            cursorLineColCount += config.tabWidth;
+        } else {
+            cursorLineColCount++;
+        }
+    }
+
+
+    const wchar_t modeNameNormal[] = L"NORMAL";
+    const wchar_t modeNameInsert[] = L"INSERT";
+    const wchar_t * modeName;
+    if (currentMode == MODE_INSERT) {
+        modeName = modeNameInsert;
+    } else {
+        modeName = modeNameNormal;
+    }
+
+    statusLength = swprintf_s(
+        statusLine,
+        MAX_STATUS_COUNT,
+        L"%s | Line: %lu/%lu (%lu %%) | Char: %lu/%lu (%lu/%lu)",
+        modeName,
+        currentDoc->cursorLineIndex + 1,
+        currentDoc->content.lineCount,
+        cursorLinePercent,
+        currentDoc->cursorCharIndex + 1,
+        cursorLine->length,
+        cursorColCount + 1,
+        cursorLineColCount);
+
+    statusPrompt = false;
+}
+
+void SetStatusInvalidCommand(const wchar_t * text) {
+    currentMode = MODE_NORMAL;
+    paintContentCursor = true;
+    paintStatusCursor = false;
+    wcscpy_s(statusLine, MAX_STATUS_COUNT, text);
+    statusLength = static_cast<ulong>(wcslen(text));
+    statusPrompt = true;
+}
+
+void ProcessNormalCharInput(wchar_t c) {
+    switch (c) {
+        case L':':
+        {
+            currentMode = MODE_COMMAND;
+            statusLine[0] = L':';
+            statusLength = 1;
+            statusCursorChar = 1;
+            paintContentCursor = false;
+            paintStatusCursor = true;
+            statusPrompt = true;
+            break;
+        }
+
+        case L'i':
+        {
+            currentMode = MODE_INSERT;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case 0x1b: // Esc
+        {
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'h':
+        {
+            if (currentDoc->cursorCharIndex != 0) {
+                currentDoc->cursorCharIndex--;
+            }
+            ResetColIndex(currentDoc);
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'l':
+        {
+            ulong length = currentDoc->content.lines[currentDoc->cursorLineIndex].length;
+            if (length != 0 && currentDoc->cursorCharIndex != length - 1) {
+                currentDoc->cursorCharIndex++;
+            }
+            ResetColIndex(currentDoc);
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'k':
+        {
+            if (currentDoc->cursorLineIndex != 0) {
+                currentDoc->cursorLineIndex--;
+                ApplyColIndex(currentDoc, false);
+            }
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'j':
+        {
+            if (currentDoc->cursorLineIndex != currentDoc->content.lineCount - 1) {
+                currentDoc->cursorLineIndex++;
+                ApplyColIndex(currentDoc, false);
+            }
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'0':
+        {
+            currentDoc->cursorCharIndex = 0;
+            currentDoc->lastCursorColIndex = 0;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'$':
+        {
+            ulong length = currentDoc->content.lines[currentDoc->cursorLineIndex].length;
+            if (length != 0) {
+                currentDoc->cursorCharIndex = length - 1;
+            }
+            ResetColIndex(currentDoc);
+            SetStatusLineNormal();
+            break;
+        }
+    }
+}
+
+void ExecuteCommandEdit(const wchar_t * args, ulong argsLength) {
+    const wchar_t statusArgsInvalid[] = L"Command args invalid!";
+    const wchar_t statusPathTooLong[] = L"Path too long!";
+    const wchar_t statusFileTooLarge[] = L"File too large!";
+    const wchar_t statusFileError[] = L"Could not open file.";
+    const wchar_t statusFileLocked[] = L"File locked!";
+    const wchar_t statusOutOfMemory[] = L"Out of memory!";
+    const wchar_t statusCurDocUnsaved[] = L"Current document has unsaved changes!";
+
+    //-----------
+    // Parse Args
+
+    ulong i = 0;
+    while (i != argsLength && iswspace(args[i])) {
+        i++;
+    }
+    if (i == argsLength) {
+        SetStatusInvalidCommand(statusArgsInvalid);
+        return;
+    }
+
+    if (args[i] == L'!') {
+        i++;
+    } else if (currentDoc->modified) {
+        SetStatusInvalidCommand(statusCurDocUnsaved);
+        return;
+    }
+
+    while (i != argsLength && iswspace(args[i])) {
+        i++;
+    }
+    if (i == argsLength) {
+        SetStatusInvalidCommand(statusArgsInvalid);
+        return;
+    }
+
+    ulong j;
+    if (args[i] == L'\"') {
+        i++;
+        j = i;
+        while (j != argsLength && args[j] != L'\"') {
+            j++;
+        }
+        if (j == argsLength) {
+            SetStatusInvalidCommand(statusArgsInvalid);
+            return;
+        }
+    } else {
+        j = i;
+        while (j != argsLength && !iswspace(args[j])) {
+            j++;
+        }
+    }
+
+    for (ulong k = j; k != argsLength; k++) {
+        if (!iswspace(args[k])) {
+            SetStatusInvalidCommand(statusArgsInvalid);
+            return;
+        }
+    }
+
+    //-------------
+    // Load File
+
+    if (j - i > MAX_PATH_COUNT) {
+        SetStatusInvalidCommand(statusPathTooLong);
+        return;
+    }
+    wchar_t path[MAX_PATH_COUNT];
+    wcsncpy_s(path, MAX_PATH_COUNT, args + i, j - i);
+
+    Doc * fileDoc;
+    ResultCode resultCode = LoadFile(path, &fileDoc);
+    switch (resultCode) {
+        case RESULT_LIMIT_REACHED:
+        {
+            SetStatusInvalidCommand(statusFileTooLarge);
+            break;
+        }
+
+        case RESULT_FILE_LOCKED:
+        {
+            SetStatusInvalidCommand(statusFileLocked);
+            break;
+        }
+
+        case RESULT_FILE_NOT_FOUND:
+        {
+            Doc * newDoc = CreateEmptyDoc();
+            if (!newDoc) {
+                SetStatusInvalidCommand(statusOutOfMemory);
+                break;
+            }
+            DestroyDoc(currentDoc);
+            currentDoc = newDoc;
+            wcscpy_s(currentDoc->title, MAX_PATH_COUNT, path);
+
+            currentMode = MODE_NORMAL;
+            paintContentCursor = true;
+            paintStatusCursor = false;
+            statusPrompt = false;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case RESULT_FILE_ERROR:
+        {
+            SetStatusInvalidCommand(statusFileError);
+            break;
+        }
+
+        case RESULT_MEMORY_ERROR:
+        {
+            SetStatusInvalidCommand(statusOutOfMemory);
+            break;
+        }
+
+        default:
+        {
+            DestroyDoc(currentDoc);
+            currentDoc = fileDoc;
+
+            currentMode = MODE_NORMAL;
+            paintContentCursor = true;
+            paintStatusCursor = false;
+            statusPrompt = false;
+            SetStatusLineNormal();
+            break;
+        }
+    }
+}
+
+void ExecuteCommandWrite(const wchar_t * args, ulong argsLength) {
+    const wchar_t statusNoName[] = L"No file name!";
+    const wchar_t statusFileLocked[] = L"File locked!";
+    const wchar_t statusFileModified[] = L"File was modified by another program!";
+    const wchar_t statusFileRemoved[] = L"File was deleted!";
+    const wchar_t statusFileWriteError[] = L"Could not write file.";
+    const wchar_t statusArgsInvalid[] = L"Command args invalid!";
+    const wchar_t statusPathTooLong[] = L"Path too long!";
+    const wchar_t statusFileExists[] = L"File already exists!";
+
+    ulong i = 0;
+
+    while (i != argsLength && iswspace(args[i])) {
+        i++;
+    }
+    
+    bool overwrite;
+    if (i != argsLength && args[i] == L'!') {
+        overwrite = true;
+        i++;
+    } else {
+        overwrite = false;
+    }
+
+    while (i != argsLength && iswspace(args[i])) {
+        i++;
+    }
+
+    if (i == argsLength) {
+        if (currentDoc->title[0] == L'\0') {
+            SetStatusInvalidCommand(statusNoName);
+            return;
+        } else {
+            ResultCode resultCode = WriteDoc(currentDoc, nullptr, overwrite);
+            switch (resultCode) {
+                case RESULT_FILE_LOCKED:
+                {
+                    SetStatusInvalidCommand(statusFileLocked);
+                    return;
+                }
+
+                case RESULT_FILE_EXISTS:
+                {
+                    SetStatusInvalidCommand(statusFileModified);
+                    return;
+                }
+
+                case RESULT_FILE_NOT_FOUND:
+                {
+                    SetStatusInvalidCommand(statusFileRemoved);
+                    return;
+                }
+
+                case RESULT_FILE_ERROR:
+                {
+                    SetStatusInvalidCommand(statusFileWriteError);
+                    return;
+                }
+            }
+
+            currentDoc->modified = false;
+        }
+    } else {
+        ulong j;
+        if (args[i] == L'\"') {
+            i++;
+            j = i;
+            while (j != argsLength && args[j] != L'\"') {
+                j++;
+            }
+            if (j == argsLength) {
+                SetStatusInvalidCommand(statusArgsInvalid);
+                return;
+            }
+        } else {
+            j = i;
+            while (j != argsLength && !iswspace(args[j])) {
+                j++;
+            }
+        }
+
+        for (ulong k = j; k != argsLength; k++) {
+            if (!iswspace(args[k])) {
+                SetStatusInvalidCommand(statusArgsInvalid);
+                return;
+            }
+        }
+
+        if (j - i > MAX_PATH_COUNT) {
+            SetStatusInvalidCommand(statusPathTooLong);
+            return;
+        }
+        wchar_t path[MAX_PATH_COUNT];
+        wcsncpy_s(path, MAX_PATH_COUNT, args + i, j - i);
+
+        ResultCode resultCode = WriteDoc(currentDoc, path, overwrite);
+        switch (resultCode) {
+            case RESULT_FILE_LOCKED:
+            {
+                SetStatusInvalidCommand(statusFileLocked);
+                return;
+            }
+
+            case RESULT_FILE_EXISTS:
+            {
+                SetStatusInvalidCommand(statusFileExists);
+                return;
+            }
+
+            case RESULT_FILE_NOT_FOUND:
+            {
+                SetStatusInvalidCommand(statusFileRemoved);
+                return;
+            }
+
+            case RESULT_FILE_ERROR:
+            {
+                SetStatusInvalidCommand(statusFileWriteError);
+                return;
+            }
+        }
+
+        currentDoc->modified = false;
+        wcscpy_s(currentDoc->title, MAX_PATH_COUNT, path);
+    }
+
+    currentMode = MODE_NORMAL;
+    paintContentCursor = true;
+    paintStatusCursor = false;
+    statusPrompt = false;
+    SetStatusLineNormal();
+}
+
+void ExecuteCommandNew(const wchar_t * args, ulong argsLength) {
+    ulong i = 0;
+    while (i != argsLength && iswspace(args[i])) {
+        i++;
+    }
+
+    if (i != argsLength && args[i] == L'!') {
+        i++;
+    } else if (currentDoc->modified) {
+        SetStatusInvalidCommand(L"Current document has unsaved changes!");
+        return;
+    }
+
+    for (ulong j = i; j != argsLength; j++) {
+        if (!iswspace(args[j])) {
+            SetStatusInvalidCommand(L"Invalid command args!");
+            return;
+        }
+    }
+
+    DestroyDoc(currentDoc);
+    currentDoc = CreateEmptyDoc();
+
+    currentMode = MODE_NORMAL;
+    paintContentCursor = true;
+    paintStatusCursor = false;
+    statusPrompt = false;
+    SetStatusLineNormal();
+}
+
+static bool WcIsAsciiAlpha(wchar_t c) {
+    return (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z');
+}
+
+static bool WcIsCName(wchar_t c) {
+    return WcIsAsciiAlpha(c) || iswdigit(c) || c == L'_';
+}
+
+void ExecuteCommand(const wchar_t * commandLine, ulong commandLength) {
+    ulong i = 0;
+    while (i != commandLength && iswspace(commandLine[i])) {
+        i++;
+    }
+    if (i == commandLength) {
+        return;
+    }
+    
+    if (!(WcIsAsciiAlpha(commandLine[i]) || commandLine[i] == L'_')) {
+        SetStatusInvalidCommand(L"Invalid command!");
+    }
+    ulong j = i;
+    do {
+        j++;
+    } while (j != commandLength && WcIsCName(commandLine[j]));
+    ulong initLength = j - i;
+
+    const wchar_t editCommand[] = L"edit";
+    const wchar_t writeCommand[] = L"write";
+    const wchar_t newCommand[] = L"enew";
+
+    if (wcsncmp(commandLine + i, editCommand, initLength) == 0 && initLength == wcslen(editCommand)) {
+        ExecuteCommandEdit(commandLine + j, commandLength - j);
+    } else if (wcsncmp(commandLine + i, writeCommand, initLength) == 0 && initLength == wcslen(writeCommand)) {
+        ExecuteCommandWrite(commandLine + j, commandLength - j);
+    } else if (wcsncmp(commandLine + i, newCommand, initLength) == 0 && initLength == wcslen(newCommand)) {
+        ExecuteCommandNew(commandLine + j, commandLength - j);
+    } else {
+        SetStatusInvalidCommand(L"Unknown command!");
+    }
+}
+
+void ProcessCommandCharInput(wchar_t c) {
+    switch (c) {
+        case 0x1b: // Esc
+        {
+            currentMode = MODE_NORMAL;
+            paintContentCursor = true;
+            paintStatusCursor = false;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'\b':
+        {
+            if (statusCursorChar == 1) {
+                if (statusLength == 1) {
+                    currentMode = MODE_NORMAL;
+                    paintContentCursor = true;
+                    paintStatusCursor = false;
+                    SetStatusLineNormal();
+                }
+            } else {
+                statusCursorChar--;
+                ulong shiftEnd = statusLength - 1;
+                for (ulong i = statusCursorChar; i != shiftEnd; i++) {
+                    statusLine[i] = statusLine[i + 1];
+                }
+                statusLength--;
+            }
+            break;
+        }
+
+        case L'\r':
+        {
+            ExecuteCommand(statusLine + 1, statusLength - 1);
+            break;
+        }
+
+        default:
+        {
+            if (iswcntrl(c)) {
+                break;
+            }
+
+            if (statusLength == MAX_STATUS_COUNT - 1) {
+                break;
+            }
+            statusLength++;
+            for (ulong i = statusLength - 1; i != statusCursorChar; i--) {
+                statusLine[i] = statusLine[i - 1];
+            }
+            statusLine[statusCursorChar++] = c;
+            break;
+        }
+    }
+}
+
+HDC bitmapDeviceContext;
+ushort bitmapWidth;
+ushort bitmapHeight;
+
+long lineHeight;
+long avgCharWidth;
+
+static void PaintCursorLine(const RECT * textRect, const wchar_t * text, ulong length, ulong charIndex) {
+    SIZE extent;
+
+    RECT lineRect = *textRect;
+
+    const wchar_t * currentText = text;
+    ulong currentLength = length;
+    const wchar_t * nextTabPos = MkWcsFindCharConst(currentText, currentLength, L'\t');
+    long cursorOffset = charIndex;
+    while (nextTabPos) {
+        ulong nextTabOffset = static_cast<ulong>(nextTabPos - currentText);
+        if (cursorOffset < 0 || static_cast<ulong>(cursorOffset) >= nextTabOffset) {
+            GetTextExtentPoint32W(
+                bitmapDeviceContext,
+                currentText,
+                nextTabOffset,
+                &extent);
+            DrawTextExW(
+                bitmapDeviceContext,
+                const_cast<wchar_t *>(currentText),
+                nextTabOffset,
+                &lineRect,
+                DT_NOCLIP | DT_NOPREFIX,
+                nullptr);
+            lineRect.left += extent.cx;
+            if (lineRect.left >= lineRect.right) {
+                break;
+            }
+
+            if (cursorOffset == nextTabOffset) {
+                RECT cursorRect;
+                cursorRect.left = lineRect.left;
+                cursorRect.top = lineRect.top;
+                cursorRect.right = lineRect.left + avgCharWidth;
+                cursorRect.bottom = lineRect.top + lineHeight;
+                FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
+            }
+
+            GetTextExtentPoint32W(
+                bitmapDeviceContext,
+                tabSpaces,
+                config.tabWidth,
+                &extent);
+            DrawTextExW(
+                bitmapDeviceContext,
+                tabSpaces,
+                config.tabWidth,
+                &lineRect,
+                DT_NOCLIP | DT_NOPREFIX,
+                nullptr);
+            lineRect.left += extent.cx;
+            if (lineRect.left >= lineRect.right) {
+                break;
+            }
+        } else {
+            GetTextExtentPoint32W(
+                bitmapDeviceContext,
+                currentText,
+                cursorOffset,
+                &extent);
+            DrawTextExW(
+                bitmapDeviceContext,
+                const_cast<wchar_t *>(currentText),
+                cursorOffset,
+                &lineRect,
+                DT_NOCLIP | DT_NOPREFIX,
+                nullptr);
+            lineRect.left += extent.cx;
+            if (lineRect.left >= lineRect.right) {
+                break;
+            }
+
+            GetTextExtentPoint32W(
+                bitmapDeviceContext,
+                &currentText[cursorOffset],
+                1,
+                &extent);
+            RECT cursorRect;
+            cursorRect.left = lineRect.left;
+            cursorRect.top = lineRect.top;
+            cursorRect.right = lineRect.left + extent.cx;
+            cursorRect.bottom = lineRect.top + lineHeight;
+            FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
+
+            GetTextExtentPoint32W(
+                bitmapDeviceContext,
+                currentText + cursorOffset,
+                nextTabOffset - cursorOffset,
+                &extent);
+            DrawTextExW(
+                bitmapDeviceContext,
+                const_cast<wchar_t *>(currentText + cursorOffset),
+                nextTabOffset - cursorOffset,
+                &lineRect,
+                DT_NOCLIP | DT_NOPREFIX,
+                nullptr);
+            lineRect.left += extent.cx;
+            if (lineRect.left >= lineRect.right) {
+                break;
+            }
+
+            GetTextExtentPoint32W(
+                bitmapDeviceContext,
+                tabSpaces,
+                config.tabWidth,
+                &extent);
+            DrawTextExW(
+                bitmapDeviceContext,
+                tabSpaces,
+                config.tabWidth,
+                &lineRect,
+                DT_NOCLIP | DT_NOPREFIX,
+                nullptr);
+            lineRect.left += extent.cx;
+            if (lineRect.left >= lineRect.right) {
+                break;
+            }
+        }
+
+        currentText = nextTabPos + 1;
+        nextTabOffset++;
+        currentLength -= nextTabOffset;
+        cursorOffset -= nextTabOffset;
+        nextTabPos = MkWcsFindCharConst(currentText, currentLength, L'\t');
+    }
+
+    if (!nextTabPos) {
+        if (cursorOffset == currentLength) {
+            GetTextExtentPoint32W(
+                bitmapDeviceContext,
+                currentText,
+                currentLength,
+                &extent);
+            DrawTextExW(
+                bitmapDeviceContext,
+                const_cast<wchar_t *>(currentText),
+                currentLength,
+                &lineRect,
+                DT_NOCLIP | DT_NOPREFIX,
+                nullptr);
+            lineRect.left += extent.cx;
+            if (lineRect.left < lineRect.right) {
+                RECT cursorRect;
+                cursorRect.left = lineRect.left;
+                cursorRect.top = lineRect.top;
+                cursorRect.right = lineRect.left + avgCharWidth;
+                cursorRect.bottom = lineRect.top + lineHeight;
+                FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
+            }
+        } else if (cursorOffset >= 0) {
+            GetTextExtentPoint32W(
+                bitmapDeviceContext,
+                currentText,
+                cursorOffset,
+                &extent);
+            DrawTextExW(
+                bitmapDeviceContext,
+                const_cast<wchar_t *>(currentText),
+                cursorOffset,
+                &lineRect,
+                DT_NOCLIP | DT_NOPREFIX,
+                nullptr);
+            lineRect.left += extent.cx;
+            if (lineRect.left < lineRect.right) {
+                GetTextExtentPoint32W(
+                    bitmapDeviceContext,
+                    currentText + cursorOffset,
+                    1,
+                    &extent);
+                RECT cursorRect;
+                cursorRect.left = lineRect.left;
+                cursorRect.top = lineRect.top;
+                cursorRect.right = lineRect.left + extent.cx;
+                cursorRect.bottom = lineRect.top + lineHeight;
+                FillRect(bitmapDeviceContext, &cursorRect, cursorBrush);
+
+                DrawTextExW(
+                    bitmapDeviceContext,
+                    const_cast<wchar_t *>(currentText + cursorOffset),
+                    currentLength - cursorOffset,
+                    &lineRect,
+                    DT_NOCLIP | DT_NOPREFIX,
+                    nullptr);
+            }
+        } else {
+            DrawTextExW(
+                bitmapDeviceContext,
+                const_cast<wchar_t *>(currentText),
+                currentLength,
+                &lineRect,
+                DT_NOCLIP | DT_NOPREFIX,
+                nullptr);
+        }
+    }
+}
+
+static void PaintLine(const RECT * textRect, const wchar_t * text, ulong length) {
+    RECT lineRect = *textRect;
+
+    const wchar_t * currentText = text;
+    ulong currentLength = length;
+    const wchar_t * nextTabPos = MkWcsFindCharConst(currentText, currentLength, L'\t');
+    while (nextTabPos) {
+        SIZE extent;
+        ulong nextTabOffset = static_cast<ulong>(nextTabPos - currentText);
+
+        GetTextExtentPoint32W(
+            bitmapDeviceContext,
+            currentText,
+            nextTabOffset,
+            &extent);
+        DrawTextExW(
+            bitmapDeviceContext,
+            const_cast<wchar_t *>(currentText),
+            nextTabOffset,
+            &lineRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            nullptr);
+        lineRect.left += extent.cx;
+        if (lineRect.left >= lineRect.right) {
+            break;
+        }
+
+        GetTextExtentPoint32W(
+            bitmapDeviceContext,
+            tabSpaces,
+            config.tabWidth,
+            &extent);
+        DrawTextExW(
+            bitmapDeviceContext,
+            tabSpaces,
+            config.tabWidth,
+            &lineRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            nullptr);
+        lineRect.left += extent.cx;
+        if (lineRect.left >= lineRect.right) {
+            break;
+        }
+
+        nextTabOffset++;
+        currentText = nextTabPos + 1;
+        currentLength -= nextTabOffset;
+        nextTabPos = MkWcsFindCharConst(currentText, currentLength, L'\t');
+    }
+
+    if (!nextTabPos) {
+        DrawTextExW(
+            bitmapDeviceContext,
+            const_cast<wchar_t *>(currentText),
+            currentLength,
+            &lineRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            nullptr);
+    }
+}
+
+static void Paint(Doc * doc) {
+    doc->lastPaintLineCount = 0;
+
+    if (bitmapWidth == 0 || bitmapHeight == 0) {
+        return;
+    }
+
+    RECT paintRect;
+    paintRect.left = 0;
+    paintRect.top = 0;
+    paintRect.right = bitmapWidth;
+    paintRect.bottom = bitmapHeight;
+    FillRect(bitmapDeviceContext, &paintRect, backgroundBrush);
+
+    SetTextColor(bitmapDeviceContext, config.textColor);
+    SetBkMode(bitmapDeviceContext, TRANSPARENT);
+
+    ulong paintLineCount = bitmapHeight / lineHeight;
+    if (paintLineCount == 0) {
+        return;
+    }
+    paintLineCount--; // space for status line
+
+    //---------------------------
+    // Paint Working Folder Line
+
+    if (paintLineCount != 0) {
+        paintRect.bottom = lineHeight;
+
+        wchar_t workingFolderLine[MAX_PATH + 32];
+        swprintf_s(workingFolderLine, MAX_PATH + 32, L"Working Folder: %s", workingFolderPath);
+
+        DrawTextExW(
+            bitmapDeviceContext,
+            workingFolderLine,
+            -1,
+            &paintRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            nullptr);
+
+        paintLineCount--;
+    }
+
+    //------------------------
+    // Paint Doc Title Line
+
+    if (paintLineCount != 0) {
+        paintRect.top += lineHeight;
+        paintRect.bottom += lineHeight;
+        FillRect(bitmapDeviceContext, &paintRect, docTitleBackgroundBrush);
+
+        wchar_t docTitleLine[MAX_PATH_COUNT + 32];
+        if (doc->title[0] == L'\0') {
+            wcscpy_s(docTitleLine, MAX_PATH_COUNT + 32, L"<UNTITLED>");
+        } else {
+            wcscpy_s(docTitleLine, MAX_PATH_COUNT + 32, doc->title);
+            if (doc->timestamp == 0) {
+                wcscat_s(docTitleLine, MAX_PATH_COUNT + 32, L" <NEW>");
+            }
+        }
+        if (doc->modified) {
+            wcscat_s(docTitleLine, MAX_PATH_COUNT + 32, L" (modified)");
+        }
+
+        DrawTextExW(
+            bitmapDeviceContext,
+            docTitleLine,
+            -1,
+            &paintRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            nullptr);
+
+        paintLineCount--;
+    }
+
+    //-----------------
+    // Paint Content
+
+    paintRect.top += lineHeight;
+    paintRect.bottom = bitmapHeight - lineHeight;
+
+    if (doc->cursorLineIndex < doc->topPaintLineIndex) {
+        doc->topPaintLineIndex = doc->cursorLineIndex;
+    }
+    ulong endPaintLineIndex = doc->topPaintLineIndex + paintLineCount;
+    if (doc->cursorLineIndex >= endPaintLineIndex) {
+        doc->topPaintLineIndex += doc->cursorLineIndex - endPaintLineIndex + 1;
+        endPaintLineIndex = doc->cursorLineIndex + 1;
+    } else if (doc->topPaintLineIndex != 0 && endPaintLineIndex > doc->content.lineCount) {
+        ulong diff = endPaintLineIndex - doc->content.lineCount;
+        if (diff > doc->topPaintLineIndex) {
+            doc->topPaintLineIndex = 0;
+        } else {
+            doc->topPaintLineIndex -= diff;
+        }
+    }
+
+    for (ulong i = doc->topPaintLineIndex; i != doc->content.lineCount; i++) {
+        if (paintRect.bottom - paintRect.top < lineHeight) {
+            break;
+        }
+
+        DocLine * line = &doc->content.lines[i];
+        if (i == doc->cursorLineIndex && paintContentCursor) {
+            PaintCursorLine(&paintRect, line->chars, line->length, doc->cursorCharIndex);
+        } else {
+            PaintLine(&paintRect, line->chars, line->length);
+        }
+
+        paintRect.left = 0;
+        paintRect.top += lineHeight;
+        doc->lastPaintLineCount++;
+    }
+
+    //---------------------
+    // Paint Status Line
+
+    paintRect.top = bitmapHeight - lineHeight;
+    paintRect.bottom = bitmapHeight;
+ 
+    if (statusPrompt) {
+        FillRect(bitmapDeviceContext, &paintRect, promptBackgroundBrush);
+        SetTextColor(bitmapDeviceContext, config.promptTextColor);
+    } else {
+        FillRect(bitmapDeviceContext, &paintRect, statusBackgroundBrush);
+    }
+
+    if (paintStatusCursor) {
+        PaintCursorLine(&paintRect, statusLine, statusLength, statusCursorChar);
+    } else {
+        DrawTextExW(
+            bitmapDeviceContext,
+            statusLine,
+            statusLength,
+            &paintRect,
+            DT_NOCLIP | DT_NOPREFIX,
+            nullptr);
+    }
+}
+
+LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+        case WM_SIZE:
+        {
+            HDC deviceContext = GetDC(window);
+
+            if (!bitmapDeviceContext) {
+                bitmapDeviceContext = CreateCompatibleDC(deviceContext);
+
+                int ppi = GetDeviceCaps(bitmapDeviceContext, LOGPIXELSY);
+                int lfHeight = 0 - ((config.fontSize * ppi) / 72);
+                HFONT font = CreateFontW(
+                    lfHeight,
+                    0,
+                    0,
+                    0,
+                    FW_DONTCARE,
+                    0,
+                    0,
+                    0,
+                    ANSI_CHARSET,
+                    OUT_DEFAULT_PRECIS,
+                    CLIP_DEFAULT_PRECIS,
+                    DEFAULT_QUALITY,
+                    DEFAULT_PITCH | FF_DONTCARE,
+                    config.fontName);
+                HFONT oldFont = static_cast<HFONT>(SelectObject(bitmapDeviceContext, font));
+                if (oldFont) {
+                    DeleteObject(oldFont);
+                }
+
+                TEXTMETRICW fontMetrics;
+                GetTextMetricsW(bitmapDeviceContext, &fontMetrics);
+                lineHeight = fontMetrics.tmHeight;
+                avgCharWidth = fontMetrics.tmAveCharWidth;
+            }
+
+            bitmapWidth = LOWORD(lparam);
+            bitmapHeight = HIWORD(lparam);
+            HBITMAP bitmap = CreateCompatibleBitmap(deviceContext, bitmapWidth, bitmapHeight);
+            HBITMAP oldBitmap = static_cast<HBITMAP>(SelectObject(bitmapDeviceContext, bitmap));
+            if (oldBitmap) {
+                DeleteObject(oldBitmap);
+            }
+
+            Paint(currentDoc);
             return 0;
         }
 
-        case WM_CHAR:
+        case WM_PAINT:
         {
-            wchar_t c = (wchar_t)wparam;
+            PAINTSTRUCT paintStruct;
+            HDC deviceContext = BeginPaint(window, &paintStruct);
 
-            if (config.useVimMode) {
-                if (ProcessCharVim(onlyDoc, c)) {
-                    Paint(onlyDoc);
-                    InvalidateRect(window, NULL, FALSE);
-                }
-                return 0;
-            }
+            BitBlt(
+                deviceContext,
+                0, 0, bitmapWidth, bitmapHeight,
+                bitmapDeviceContext,
+                0, 0,
+                SRCCOPY);
 
-            switch (c) {
-                case L'\t':
-                {
-                    if (currentMode != MODE_INSERT) {
-                        break;
-                    }
-
-                    if (config.expandTabs) {
-                        InsertChars(onlyDoc, tabSpaces, config.tabWidth);
-                    } else {
-                        InsertChars(onlyDoc, &c, 1);
-                    }
-                    onlyDoc->modified = TRUE;
-                    UpdateColDrawIndex(onlyDoc);
-                    paintStatusMessage = FALSE;
-                    break;
-                }
-
-                case L'\r':
-                {
-                    if (currentMode == MODE_INSERT) {
-                        if (onlyDoc->lines.textBufferCount == onlyDoc->lines.textBufferCapacity) {
-                            onlyDoc->lines.textBufferCapacity += TEXTBUFFER_GROW_COUNT;
-                            onlyDoc->lines.textBuffer = (DocLine *)realloc(onlyDoc->lines.textBuffer, onlyDoc->lines.textBufferCapacity * sizeof(DocLine));
-                        }
-                        onlyDoc->lines.textBufferCount++;
-
-                        for (ulong i = onlyDoc->lines.textBufferCount - 1; i != onlyDoc->cursorRowIndex + 1; i--) {
-                            onlyDoc->lines.textBuffer[i] = onlyDoc->lines.textBuffer[i - 1];
-                        }
-
-                        DocLine * rowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex];
-                        DocLine * newRowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex + 1];
-                        newRowPtr->length = rowPtr->length - onlyDoc->cursorColIndex;
-                        newRowPtr->capacity = INIT_ROW_CAPACITY;
-                        while (newRowPtr->length > newRowPtr->capacity) {
-                            newRowPtr->capacity *= 2;
-                        }
-                        newRowPtr->text = (wchar_t *)malloc(newRowPtr->capacity * sizeof(wchar_t));
-
-                        for (ushort i = 0; i != newRowPtr->length; i++) {
-                            newRowPtr->text[i] = rowPtr->text[onlyDoc->cursorColIndex + i];
-                        }
-
-                        rowPtr->length = onlyDoc->cursorColIndex;
-                        onlyDoc->cursorColIndex = 0;
-                        onlyDoc->cursorColLastDrawIndex = 0;
-                        onlyDoc->cursorRowIndex++;
-
-                        onlyDoc->modified = TRUE;
-                        paintStatusMessage = FALSE;
-                    } else if (currentMode == MODE_OPEN_FILE) {
-                        Doc * newDoc = TryLoadFile();
-                        if (newDoc) {
-                            DestroyDoc(onlyDoc);
-                            onlyDoc = newDoc;
-                        }
-                    } else if (currentMode == MODE_SAVE_FILE) {
-                        TrySaveFile(&onlyDoc->lines);
-                    }
-                    break;
-                }
-
-                case L'\b':
-                {
-                    if (currentMode == MODE_INSERT) {
-                        if (onlyDoc->cursorColIndex == 0) {
-                            if (onlyDoc->cursorRowIndex != 0) {
-                                DocLine * rowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex];
-                                DocLine * prevRowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex - 1];
-                                ushort prevOldLength = prevRowPtr->length;
-                                prevRowPtr->length += rowPtr->length;
-                                if (prevRowPtr->length > prevRowPtr->capacity) {
-                                    prevRowPtr->capacity += rowPtr->capacity;
-                                    prevRowPtr->text = (wchar_t *)realloc(prevRowPtr->text, prevRowPtr->capacity * sizeof(wchar_t));
-                                }
-
-                                for (ushort i = 0; i != rowPtr->length; i++) {
-                                    prevRowPtr->text[prevOldLength + i] = rowPtr->text[i];
-                                }
-                                free(rowPtr->text);
-
-                                for (ulong i = onlyDoc->cursorRowIndex; i != onlyDoc->lines.textBufferCount - 1; i++) {
-                                    onlyDoc->lines.textBuffer[i] = onlyDoc->lines.textBuffer[i + 1];
-                                }
-                                onlyDoc->lines.textBufferCount--;
-
-                                onlyDoc->cursorRowIndex--;
-                                onlyDoc->cursorColIndex = prevRowPtr->length;
-
-                                onlyDoc->modified = TRUE;
-                            }
-                        } else {
-                            DocLine * rowPtr = &onlyDoc->lines.textBuffer[onlyDoc->cursorRowIndex];
-                            for (ushort i = onlyDoc->cursorColIndex; i != rowPtr->length; i++) {
-                                rowPtr->text[i - 1] = rowPtr->text[i];
-                            }
-                            onlyDoc->cursorColIndex--;
-                            rowPtr->length--;
-
-                            onlyDoc->modified = TRUE;
-                        }
-                        UpdateColDrawIndex(onlyDoc);
-                        paintStatusMessage = FALSE;
-                    } else {
-                        if (statusCursorCol != 0) {
-                            for (ushort i = statusCursorCol; i != statusInputLength; i++) {
-                                statusInput[i - 1] = statusInput[i];
-                            }
-                            statusCursorCol--;
-                            statusInputLength--;
-                        }
-                    }
-                    break;
-                }
-
-                case 0xf: // Ctrl + O
-                {
-                    if (currentMode != MODE_INSERT) {
-                        break;
-                    }
-
-                    paintStatusMessage = FALSE;
-                    currentMode = MODE_OPEN_FILE;
-                    statusInputLength = 0;
-                    statusCursorCol = 0;
-                    break;
-                }
-
-                case 0x13: // Ctrl + S
-                {
-                    if (currentMode != MODE_INSERT) {
-                        break;
-                    }
-
-                    paintStatusMessage = FALSE;
-                    currentMode = MODE_SAVE_FILE;
-                    wcscpy_s(statusInput, MAX_PATH, filePath);
-                    statusInputLength = (ushort)wcslen(statusInput);
-                    statusCursorCol = statusInputLength;
-                    break;
-                }
-
-                default:
-                {
-                    if (iswcntrl(c)) {
-                        break;
-                    }
-
-                    if (currentMode == MODE_INSERT) {
-                        InsertChars(onlyDoc, &c, 1);
-                        onlyDoc->modified = TRUE;
-                        UpdateColDrawIndex(onlyDoc);
-                        paintStatusMessage = FALSE;
-                    } else {
-                        if (statusInputLength != 2 * MAX_PATH) {
-                            for (ushort i = statusInputLength; i != statusCursorCol; i--) {
-                                statusInput[i] = statusInput[i - 1];
-                            }
-                            statusInputLength++;
-                            statusInput[statusCursorCol++] = c;
-                        }
-                    }
-                    break;
-                }
-            }
-
-            Paint(onlyDoc);
-            InvalidateRect(window, NULL, FALSE);
+            EndPaint(window, &paintStruct);
             return 0;
         }
 
         case WM_CLOSE:
         {
-            if (onlyDoc->modified) {
+            if (currentDoc->modified) {
                 int promptResult = MessageBoxW(
                     window,
-                    L"The current document contains unsaved changes. Close anyway?",
+                    L"One or more documents contain unsaved changes. Close anyway?",
                     L"Warning",
                     MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
                 if (promptResult != IDYES) {
@@ -1556,28 +1593,52 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             return 0;
         }
 
+        case WM_CHAR:
+        {
+            wchar_t c = static_cast<wchar_t>(wparam);
+
+            switch (currentMode) {
+                case MODE_NORMAL:
+                {
+                    ProcessNormalCharInput(c);
+                    Paint(currentDoc);
+                    InvalidateRect(window, nullptr, false);
+                    break;
+                }
+
+                case MODE_COMMAND:
+                {
+                    ProcessCommandCharInput(c);
+                    Paint(currentDoc);
+                    InvalidateRect(window, nullptr, false);
+                    break;
+                }
+
+                case MODE_INSERT:
+                {
+                    if (c == 0x1b) { // Esc
+                        currentMode = MODE_NORMAL;
+                        if (currentDoc->cursorCharIndex != 0 && currentDoc->cursorCharIndex == currentDoc->content.lines[currentDoc->cursorLineIndex].length) {
+                            currentDoc->cursorCharIndex--;
+                        }
+                    } else {
+                        ProcessDocCharInput(currentDoc, c);
+                    }
+                    SetStatusLineNormal();
+                    Paint(currentDoc);
+                    InvalidateRect(window, nullptr, false);
+                    break;
+                }
+            }
+
+            return 0;
+        }
+
         default:
         {
             return DefWindowProcW(window, message, wparam, lparam);
         }
     }
-}
-
-static bool DocStreamCallback(void * rawDoc, wchar_t * wc, void ** stopStatus) {
-    Doc * doc = (Doc *)rawDoc;
-    if (doc->cursorColIndex == doc->lines.textBuffer[doc->cursorRowIndex].length) {
-        if (doc->cursorRowIndex == doc->lines.textBufferCount - 1) {
-            return false;
-        }
-
-        *wc = L'\n';
-        doc->cursorRowIndex++;
-        doc->cursorColIndex = 0;
-    } else {
-        *wc = doc->lines.textBuffer[doc->cursorRowIndex].text[doc->cursorColIndex];
-        doc->cursorColIndex++;
-    }
-    return true;
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prevInstance, wchar_t * commandLine, int showCommand) {
@@ -1587,59 +1648,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prevInstance, wchar_t * comman
     SHGetKnownFolderPath(
         FOLDERID_RoamingAppData,
         KF_FLAG_DEFAULT,
-        NULL,
+        nullptr,
         &appDataFolderPath);
     wchar_t configFilePath[MAX_PATH];
     swprintf_s(configFilePath, MAX_PATH, L"%s\\MKedit\\Config.cfg", appDataFolderPath);
     CoTaskMemFree(appDataFolderPath);
+    LoadConfigFile(configFilePath);
 
-    {
-        HANDLE configFile = CreateFileW(
-            configFilePath,
-            GENERIC_READ,
-            FILE_SHARE_READ,
-            nullptr,
-            OPEN_EXISTING,
-            FILE_FLAG_SEQUENTIAL_SCAN,
-            nullptr);
-        if (configFile != INVALID_HANDLE_VALUE) {
-            LARGE_INTEGER configFileSize;
-            GetFileSizeEx(configFile, &configFileSize);
-
-            byte * rawInput = (byte *)malloc(configFileSize.QuadPart);
-            ulong bytesRead;
-            ReadFile(
-                configFile,
-                rawInput,
-                (ulong)configFileSize.QuadPart,
-                &bytesRead,
-                nullptr);
-            CloseHandle(configFile);
-
-            MkList configFileContent;
-            MkListInit(&configFileContent, 16, sizeof(wchar_t));
-            MkReadUtf8Stream(rawInput, (ulong)configFileSize.QuadPart, &configFileContent);
-            free(rawInput);
-
-            MkConfGenLoadError * configErrors;
-            ulong configErrorCount;
-
-            ConfigLoad(
-                &config,
-                (wchar_t *)MkListGet(&configFileContent, 0),
-                configFileContent.count,
-                &configErrors,
-                &configErrorCount);
-            if (configErrorCount != 0) {
-                free(configErrors);
-            }
-
-            MkListClear(&configFileContent);
-        }
-    }
-
-    tabSpaces = (wchar_t *)malloc(config.tabWidth * sizeof(wchar_t));
-    for (unsigned i = 0; i != config.tabWidth; i++) {
+    tabSpaces = static_cast<wchar_t *>(malloc(config.tabWidth * sizeof(wchar_t)));
+    for (ulong i = 0; i != config.tabWidth; i++) {
         tabSpaces[i] = L' ';
     }
 
@@ -1651,13 +1668,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prevInstance, wchar_t * comman
     promptTextBrush = CreateSolidBrush(config.promptTextColor);
     promptBackgroundBrush = CreateSolidBrush(config.promptBackgroundColor);
 
-    onlyDoc = CreateEmptyDoc();
-
+    currentDoc = CreateEmptyDoc();
     GetCurrentDirectoryW(MAX_PATH, workingFolderPath);
+    SetStatusLineNormal();
 
     const wchar_t windowClassName[] = L"MKedit";
 
-    WNDCLASSEXW windowClass = { 0 };
+    WNDCLASSEXW windowClass = {};
     windowClass.cbSize = sizeof(WNDCLASSEXW);
     windowClass.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
     windowClass.lpfnWndProc = WindowProc;

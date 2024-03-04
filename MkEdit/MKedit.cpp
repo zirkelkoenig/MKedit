@@ -562,6 +562,7 @@ enum CommandType {
     COMMAND_NONE,
     COMMAND_TO_NEXT_CHAR,
     COMMAND_TO_PREV_CHAR,
+    COMMAND_DELETE,
 };
 
 CommandType commandStaged = COMMAND_NONE;
@@ -608,7 +609,7 @@ void SetStatusLineNormal() {
     swprintf_s(
         statusLine,
         MAX_STATUS_COUNT,
-        L"%s | Line: %lu/%lu (%lu %%) | Char: %lu/%lu (%lu/%lu)",
+        L"%s | Line: %lu/%lu (%lu %%) | Char: %lu/%lu (%lu/%lu) | ",
         modeName,
         currentDoc->cursorLineIndex + 1,
         currentDoc->content.lineCount,
@@ -617,16 +618,17 @@ void SetStatusLineNormal() {
         cursorLine->length,
         cursorColCount + 1,
         cursorLineColCount);
+    statusLength = wcslen(statusLine);
+    
 
     if (commandDigitStack.count != 0) {
-        wcscat_s(statusLine, MAX_STATUS_COUNT, L" | ");
-        statusLength = wcslen(statusLine);
-
         wchar_t * digits = static_cast<wchar_t *>(MkListGet(&commandDigitStack, 0));
         for (ulong i = 0; i != commandDigitStack.count; i++) {
             statusLine[statusLength++] = digits[i];
         }
+    }
 
+    if (commandStaged != COMMAND_NONE) {
         switch (commandStaged) {
             case COMMAND_TO_NEXT_CHAR:
             {
@@ -639,9 +641,13 @@ void SetStatusLineNormal() {
                 statusLine[statusLength++] = L'F';
                 break;
             }
+
+            case COMMAND_DELETE:
+            {
+                statusLine[statusLength++] = L'd';
+                break;
+            }
         }
-    } else {
-        statusLength = wcslen(statusLine);
     }
 
     statusPrompt = false;
@@ -705,7 +711,7 @@ void ProcessNormalCharInput(wchar_t c) {
             }
 
             ResetCommand();
-            break;
+            return;
         }
 
         case COMMAND_TO_PREV_CHAR:
@@ -736,7 +742,34 @@ void ProcessNormalCharInput(wchar_t c) {
             }
 
             ResetCommand();
-            break;
+            return;
+        }
+
+        case COMMAND_DELETE:
+        {
+            if (c == L'd') {
+                if (currentDoc->content.lineCount == 1) {
+                    currentDoc->content.lines[0].length = 0;
+                    currentDoc->cursorCharIndex = 0;
+                    currentDoc->lastCursorColIndex = 0;
+                } else {
+                    free(currentDoc->content.lines[currentDoc->cursorLineIndex].chars);
+                    if (currentDoc->cursorLineIndex == currentDoc->content.lineCount - 1) {
+                        currentDoc->cursorLineIndex--;
+                    } else {
+                        ulong shiftEnd = currentDoc->content.lineCount - 1;
+                        for (ulong i = currentDoc->cursorLineIndex; i != shiftEnd; i++) {
+                            currentDoc->content.lines[i] = currentDoc->content.lines[i + 1];
+                        }
+                    }
+                    currentDoc->content.lineCount--;
+                    ApplyColIndex(currentDoc, false);
+                }
+
+                currentDoc->modified = true;
+            }
+            ResetCommand();
+            return;
         }
     }
 
@@ -820,6 +853,7 @@ void ProcessNormalCharInput(wchar_t c) {
             newLine->chars = static_cast<wchar_t *>(malloc(newLine->capacity * sizeof(wchar_t)));
 
             currentMode = MODE_INSERT;
+            currentDoc->modified = true;
             SetStatusLineNormal();
             break;
         }
@@ -845,6 +879,35 @@ void ProcessNormalCharInput(wchar_t c) {
             newLine->chars = static_cast<wchar_t *>(malloc(newLine->capacity * sizeof(wchar_t)));
 
             currentMode = MODE_INSERT;
+            currentDoc->modified = true;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'x':
+        {
+            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+            if (line->length != 0) {
+                if (currentDoc->cursorCharIndex == line->length - 1) {
+                    currentDoc->cursorCharIndex--;
+                } else {
+                    ulong shiftEnd = line->length - 1;
+                    for (ulong i = currentDoc->cursorCharIndex; i != shiftEnd; i++) {
+                        line->chars[i] = line->chars[i + 1];
+                    }
+                }
+                line->length--;
+                currentDoc->modified = true;
+            }
+
+            ResetColIndex(currentDoc);
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'd':
+        {
+            commandStaged = COMMAND_DELETE;
             SetStatusLineNormal();
             break;
         }

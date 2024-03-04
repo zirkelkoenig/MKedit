@@ -767,6 +767,88 @@ void ProcessNormalCharInput(wchar_t c) {
             break;
         }
 
+        case L'I':
+        {
+            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+            for (currentDoc->cursorCharIndex = 0; currentDoc->cursorCharIndex != line->length; currentDoc->cursorCharIndex++) {
+                if (!iswspace(line->chars[currentDoc->cursorCharIndex])) {
+                    break;
+                }
+            }
+            currentMode = MODE_INSERT;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'a':
+        {
+            if (currentDoc->content.lines[currentDoc->cursorLineIndex].length != 0) {
+                currentDoc->cursorCharIndex++;
+            }
+            currentMode = MODE_INSERT;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'A':
+        {
+            currentDoc->cursorCharIndex = currentDoc->content.lines[currentDoc->cursorLineIndex].length;
+            currentMode = MODE_INSERT;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'o':
+        {
+            if (currentDoc->content.lineCount == currentDoc->content.lineCapacity) {
+                ulong newCapacity = currentDoc->content.lineCapacity + DOCLINES_GROW_COUNT;
+                DocLine * newLines = static_cast<DocLine *>(realloc(currentDoc->content.lines, newCapacity * sizeof(DocLine)));
+                currentDoc->content.lineCapacity = newCapacity;
+                currentDoc->content.lines = newLines;
+            }
+
+            currentDoc->content.lineCount++;
+            currentDoc->cursorLineIndex++;
+            currentDoc->cursorCharIndex = 0;
+            for (ulong i = currentDoc->content.lineCount - 1; i != currentDoc->cursorLineIndex; i--) {
+                currentDoc->content.lines[i] = currentDoc->content.lines[i - 1];
+            }
+
+            DocLine * newLine = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+            newLine->length = 0;
+            newLine->capacity = DOCLINE_INIT_CAPACITY;
+            newLine->chars = static_cast<wchar_t *>(malloc(newLine->capacity * sizeof(wchar_t)));
+
+            currentMode = MODE_INSERT;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'O':
+        {
+            if (currentDoc->content.lineCount == currentDoc->content.lineCapacity) {
+                ulong newCapacity = currentDoc->content.lineCapacity + DOCLINES_GROW_COUNT;
+                DocLine * newLines = static_cast<DocLine *>(realloc(currentDoc->content.lines, newCapacity * sizeof(DocLine)));
+                currentDoc->content.lineCapacity = newCapacity;
+                currentDoc->content.lines = newLines;
+            }
+
+            currentDoc->content.lineCount++;
+            currentDoc->cursorCharIndex = 0;
+            for (ulong i = currentDoc->content.lineCount - 1; i != currentDoc->cursorLineIndex; i--) {
+                currentDoc->content.lines[i] = currentDoc->content.lines[i - 1];
+            }
+
+            DocLine * newLine = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+            newLine->length = 0;
+            newLine->capacity = DOCLINE_INIT_CAPACITY;
+            newLine->chars = static_cast<wchar_t *>(malloc(newLine->capacity * sizeof(wchar_t)));
+
+            currentMode = MODE_INSERT;
+            SetStatusLineNormal();
+            break;
+        }
+
         case L'h':
         {
             if (currentDoc->cursorCharIndex != 0) {
@@ -1768,6 +1850,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                         if (currentDoc->cursorCharIndex != 0 && currentDoc->cursorCharIndex == currentDoc->content.lines[currentDoc->cursorLineIndex].length) {
                             currentDoc->cursorCharIndex--;
                         }
+                        ResetColIndex(currentDoc);
                     } else {
                         ProcessDocCharInput(currentDoc, c);
                     }

@@ -558,6 +558,15 @@ ulong statusLength = 0;
 ulong statusCursorChar = 0;
 bool statusPrompt = false;
 
+enum CommandType {
+    COMMAND_NONE,
+    COMMAND_TO_NEXT_CHAR,
+    COMMAND_TO_PREV_CHAR,
+};
+
+CommandType commandStaged = COMMAND_NONE;
+MkList commandDigitStack;
+
 void SetStatusLineNormal() {
     ulong cursorLinePercent;
     if (currentDoc->content.lineCount > 1) {
@@ -596,7 +605,7 @@ void SetStatusLineNormal() {
         modeName = modeNameNormal;
     }
 
-    statusLength = swprintf_s(
+    swprintf_s(
         statusLine,
         MAX_STATUS_COUNT,
         L"%s | Line: %lu/%lu (%lu %%) | Char: %lu/%lu (%lu/%lu)",
@@ -608,6 +617,32 @@ void SetStatusLineNormal() {
         cursorLine->length,
         cursorColCount + 1,
         cursorLineColCount);
+
+    if (commandDigitStack.count != 0) {
+        wcscat_s(statusLine, MAX_STATUS_COUNT, L" | ");
+        statusLength = wcslen(statusLine);
+
+        wchar_t * digits = static_cast<wchar_t *>(MkListGet(&commandDigitStack, 0));
+        for (ulong i = 0; i != commandDigitStack.count; i++) {
+            statusLine[statusLength++] = digits[i];
+        }
+
+        switch (commandStaged) {
+            case COMMAND_TO_NEXT_CHAR:
+            {
+                statusLine[statusLength++] = L'f';
+                break;
+            }
+
+            case COMMAND_TO_PREV_CHAR:
+            {
+                statusLine[statusLength++] = L'F';
+                break;
+            }
+        }
+    } else {
+        statusLength = wcslen(statusLine);
+    }
 
     statusPrompt = false;
 }
@@ -621,7 +656,97 @@ void SetStatusInvalidCommand(const wchar_t * text) {
     statusPrompt = true;
 }
 
+uint PowU(uint base, uint exp) {
+    ulong result = 1;
+    for (ulong i = 1; i <= exp; i++) {
+        result *= base;
+    }
+    return result;
+}
+
+void ResetCommand() {
+    commandStaged = COMMAND_NONE;
+    commandDigitStack.count = 0;
+    SetStatusLineNormal();
+}
+
 void ProcessNormalCharInput(wchar_t c) {
+    if (c == 0x1b) { // Esc
+        ResetCommand();
+        return;
+    }
+
+    switch (commandStaged) {
+        case COMMAND_TO_NEXT_CHAR:
+        {
+            if (iswcntrl(c)) {
+                ResetCommand();
+            }
+
+            uint count;
+            if (commandDigitStack.count == 0) {
+                count = 1;
+            } else {
+                wchar_t * digits = static_cast<wchar_t *>(MkListGet(&commandDigitStack, 0));
+                count = 0;
+                for (ulong i = 0; i != commandDigitStack.count; i++) {
+                    count += (digits[commandDigitStack.count - 1 - i] - L'0') * PowU(10, i);
+                }
+            }
+
+            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+            for (uint i = 0; i != count; i++) {
+                for (ulong j = currentDoc->cursorCharIndex + 1; j <= line->length; j++) {
+                    if (line->chars[j] == c) {
+                        currentDoc->cursorCharIndex = j;
+                        break;
+                    }
+                }
+            }
+
+            ResetCommand();
+            break;
+        }
+
+        case COMMAND_TO_PREV_CHAR:
+        {
+            if (iswcntrl(c)) {
+                ResetCommand();
+            }
+
+            uint count;
+            if (commandDigitStack.count == 0) {
+                count = 1;
+            } else {
+                wchar_t * digits = static_cast<wchar_t *>(MkListGet(&commandDigitStack, 0));
+                count = 0;
+                for (ulong i = 0; i != commandDigitStack.count; i++) {
+                    count += (digits[commandDigitStack.count - 1 - i] - L'0') * PowU(10, i);
+                }
+            }
+
+            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+            for (uint i = 0; i != count; i++) {
+                for (ulong j = currentDoc->cursorCharIndex - 1; j != ULONG_MAX; j--) { // intentional overflow
+                    if (line->chars[j] == c) {
+                        currentDoc->cursorCharIndex = j;
+                        break;
+                    }
+                }
+            }
+
+            ResetCommand();
+            break;
+        }
+    }
+
+    if ((c >= L'1' && c <= L'9') || (c == L'0' && commandDigitStack.count != 0)) {
+        wchar_t * newDigit = static_cast<wchar_t *>(MkListInsert(&commandDigitStack, ULONG_MAX, 1));
+        *newDigit = c;
+        SetStatusLineNormal();
+        return;
+    }
+
     switch (c) {
         case L':':
         {
@@ -638,12 +763,6 @@ void ProcessNormalCharInput(wchar_t c) {
         case L'i':
         {
             currentMode = MODE_INSERT;
-            SetStatusLineNormal();
-            break;
-        }
-
-        case 0x1b: // Esc
-        {
             SetStatusLineNormal();
             break;
         }
@@ -697,6 +816,20 @@ void ProcessNormalCharInput(wchar_t c) {
             break;
         }
 
+        case L'^':
+        {
+            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+            for (ulong i = 0; i != line->length; i++) {
+                if (!iswspace(line->chars[i])) {
+                    currentDoc->cursorCharIndex = i;
+                    break;
+                }
+            }
+            ResetColIndex(currentDoc);
+            SetStatusLineNormal();
+            break;
+        }
+
         case L'$':
         {
             ulong length = currentDoc->content.lines[currentDoc->cursorLineIndex].length;
@@ -704,6 +837,20 @@ void ProcessNormalCharInput(wchar_t c) {
                 currentDoc->cursorCharIndex = length - 1;
             }
             ResetColIndex(currentDoc);
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'f':
+        {
+            commandStaged = COMMAND_TO_NEXT_CHAR;
+            SetStatusLineNormal();
+            break;
+        }
+
+        case L'F':
+        {
+            commandStaged = COMMAND_TO_PREV_CHAR;
             SetStatusLineNormal();
             break;
         }
@@ -1670,6 +1817,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prevInstance, wchar_t * comman
 
     currentDoc = CreateEmptyDoc();
     GetCurrentDirectoryW(MAX_PATH, workingFolderPath);
+    MkListInit(&commandDigitStack, 8, sizeof(wchar_t));
     SetStatusLineNormal();
 
     const wchar_t windowClassName[] = L"MKedit";

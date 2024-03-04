@@ -276,7 +276,7 @@ void ApplyColIndex(Doc * doc, bool plusOne) {
     DocLine * line = &doc->content.lines[doc->cursorLineIndex];
 
     ulong end = line->length;
-    if (!plusOne) {
+    if (!plusOne && end != 0) {
         end--;
     }
 

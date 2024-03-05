@@ -82,7 +82,6 @@
     <ClCompile Include="Config.cpp" />
     <ClCompile Include="Generated\ConfigGen.cpp" />
     <ClCompile Include="Import\MkConfGen.cpp" />
-    <ClCompile Include="Import\MkList.cpp" />
     <ClCompile Include="Import\MkString.cpp" />
     <ClCompile Include="MKedit.cpp" />
   </ItemGroup>

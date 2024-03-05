@@ -13,9 +13,6 @@
       <Filter>Import</Filter>
     </ClCompile>
     <ClCompile Include="Base.cpp" />
-    <ClCompile Include="Import\MkList.cpp">
-      <Filter>Import</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Import">

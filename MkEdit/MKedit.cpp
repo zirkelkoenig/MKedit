@@ -256,14 +256,13 @@ ResultCode LoadConfigFile(const wchar_t filePath[MAX_PATH_COUNT]) {
         return RESULT_OK;
     }
 
-    MkList content;
-    MkListInit(&content, 128, sizeof(wchar_t));
+    MkList2<wchar_t> content(128);
 
     auto writeCallback = [](void * stream, const void * buffer, ulong count, void * status) {
-        MkList * content = static_cast<MkList *>(stream);
+        MkList2<wchar_t> * content = static_cast<MkList2<wchar_t> *>(stream);
         const wchar_t * wcs = static_cast<const wchar_t *>(buffer);
 
-        wchar_t * newElems = static_cast<wchar_t *>(MkListInsert(content, ULONG_MAX, count));
+        wchar_t * newElems = content->Insert(ULONG_MAX, count);
         if (!newElems) {
             return false;
         }
@@ -291,7 +290,7 @@ ResultCode LoadConfigFile(const wchar_t filePath[MAX_PATH_COUNT]) {
         free(loadErrors);
     }
 
-    MkListClear(&content);
+    content.Clear();
 
     if (loadSuccess) {
         return RESULT_OK;
@@ -370,14 +369,14 @@ ResultCode WriteDoc(Doc * doc, const wchar_t * newPath, bool overwrite) {
     };
 
     bool writeSuccess = MkUtf8WriteWcs(
-        doc->content.lines[0].chars, doc->content.lines[0].length, true,
+        doc->lines.elems[0].elems, doc->lines.elems[0].count, true,
         writeCallback, file, nullptr);
     if (!writeSuccess) {
         CloseHandle(file);
         return RESULT_FILE_ERROR;
     }
 
-    for (ulong i = 1; i != doc->content.lineCount; i++) {
+    for (ulong i = 1; i != doc->lines.count; i++) {
         writeSuccess = MkUtf8WriteWcs(
             L"\n", 1, true,
             writeCallback, file, nullptr);
@@ -387,7 +386,7 @@ ResultCode WriteDoc(Doc * doc, const wchar_t * newPath, bool overwrite) {
         }
 
         writeSuccess = MkUtf8WriteWcs(
-            doc->content.lines[i].chars, doc->content.lines[i].length, true,
+            doc->lines.elems[i].elems, doc->lines.elems[i].count, true,
             writeCallback, file, nullptr);
         if (!writeSuccess) {
             CloseHandle(file);
@@ -453,50 +452,35 @@ ResultCode LoadFile(const wchar_t * path, Doc ** doc) {
 
         for (ulong i = 0; i != count; i++) {
             if (chars[i] == L'\n') {
-                if (doc->content.lineCount == MAX_LINE_COUNT) {
+                if (doc->lines.count == MAX_LINE_COUNT) {
                     *result = RESULT_LIMIT_REACHED;
                     return false;
                 }
 
-                if (doc->content.lineCount == doc->content.lineCapacity) {
-                    ulong newCapacity = doc->content.lineCapacity + DOCLINES_GROW_COUNT;
-                    DocLine * newLines = static_cast<DocLine *>(realloc(doc->content.lines, newCapacity * sizeof(DocLine)));
-                    if (!newLines) {
-                        *result = RESULT_MEMORY_ERROR;
-                        return false;
-                    }
-                    doc->content.lineCapacity = newCapacity;
-                    doc->content.lines = newLines;
+                MkList2<wchar_t> * newLine = doc->lines.Insert(ULONG_MAX, 1);
+                if (!newLine) {
+                    *result = RESULT_MEMORY_ERROR;
+                    return false;
                 }
-
-                DocLine * line = &doc->content.lines[doc->content.lineCount++];
-                line->length = 0;
-                line->capacity = DOCLINE_INIT_CAPACITY;
-                line->chars = static_cast<wchar_t *>(malloc(line->capacity * sizeof(wchar_t)));
-                if (!line->chars) {
+                newLine->Init(DOCLINE_INIT_CAPACITY);
+                if (!newLine->SetCapacity(newLine->growCount)) {
                     *result = RESULT_MEMORY_ERROR;
                     return false;
                 }
             } else {
-                DocLine * line = &doc->content.lines[doc->content.lineCount - 1];
+                MkList2<wchar_t> * line = &doc->lines.elems[doc->lines.count - 1];
 
-                if (line->length == MAX_LINE_LENGTH) {
+                if (line->count == MAX_LINE_LENGTH) {
                     *result = RESULT_LIMIT_REACHED;
                     return false;
                 }
 
-                if (line->length == line->capacity) {
-                    ulong newCapacity = line->capacity * 2;
-                    wchar_t * newChars = static_cast<wchar_t *>(realloc(line->chars, newCapacity * sizeof(wchar_t)));
-                    if (!newChars) {
-                        *result = RESULT_MEMORY_ERROR;
-                        return false;
-                    }
-                    line->capacity = newCapacity;
-                    line->chars = newChars;
+                if (line->count == line->capacity && !line->SetCapacity(line->capacity * 2)) {
+                    *result = RESULT_MEMORY_ERROR;
+                    return false;
                 }
-
-                line->chars[line->length++] = chars[i];
+                wchar_t * newChar = line->Insert(ULONG_MAX, 1);
+                *newChar = chars[i];
             }
         }
 
@@ -566,21 +550,22 @@ enum CommandType {
 };
 
 CommandType commandStaged = COMMAND_NONE;
-MkList commandDigitStack;
+wchar_t commandDigitStack[16];
+ushort commandDigitCount = 0;
 
 void SetStatusLineNormal() {
     ulong cursorLinePercent;
-    if (currentDoc->content.lineCount > 1) {
-        cursorLinePercent = (100 * currentDoc->cursorLineIndex) / (currentDoc->content.lineCount - 1);
+    if (currentDoc->lines.count > 1) {
+        cursorLinePercent = (100 * currentDoc->cursorLineIndex) / (currentDoc->lines.count - 1);
     } else {
         cursorLinePercent = 0;
     }
 
-    DocLine * cursorLine = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+    MkList2<wchar_t> * cursorLine = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
 
     ulong cursorColCount = 0;
     for (ulong i = 0; i != currentDoc->cursorCharIndex; i++) {
-        if (cursorLine->chars[i] == L'\t') {
+        if (cursorLine->elems[i] == L'\t') {
             cursorColCount += config.tabWidth;
         } else {
             cursorColCount++;
@@ -588,8 +573,8 @@ void SetStatusLineNormal() {
     }
 
     ulong cursorLineColCount = 0;
-    for (ulong i = 0; i != cursorLine->length; i++) {
-        if (cursorLine->chars[i] == L'\t') {
+    for (ulong i = 0; i != cursorLine->count; i++) {
+        if (cursorLine->elems[i] == L'\t') {
             cursorLineColCount += config.tabWidth;
         } else {
             cursorLineColCount++;
@@ -612,19 +597,17 @@ void SetStatusLineNormal() {
         L"%s | Line: %lu/%lu (%lu %%) | Char: %lu/%lu (%lu/%lu) | ",
         modeName,
         currentDoc->cursorLineIndex + 1,
-        currentDoc->content.lineCount,
+        currentDoc->lines.count,
         cursorLinePercent,
         currentDoc->cursorCharIndex + 1,
-        cursorLine->length,
+        cursorLine->count,
         cursorColCount + 1,
         cursorLineColCount);
-    statusLength = wcslen(statusLine);
-    
+    statusLength = static_cast<ulong>(wcslen(statusLine));
 
-    if (commandDigitStack.count != 0) {
-        wchar_t * digits = static_cast<wchar_t *>(MkListGet(&commandDigitStack, 0));
-        for (ulong i = 0; i != commandDigitStack.count; i++) {
-            statusLine[statusLength++] = digits[i];
+    if (commandDigitCount != 0) {
+        for (ulong i = 0; i != commandDigitCount; i++) {
+            statusLine[statusLength++] = commandDigitStack[i];
         }
     }
 
@@ -672,7 +655,7 @@ uint PowU(uint base, uint exp) {
 
 void ResetCommand() {
     commandStaged = COMMAND_NONE;
-    commandDigitStack.count = 0;
+    commandDigitCount = 0;
     SetStatusLineNormal();
 }
 
@@ -690,20 +673,19 @@ void ProcessNormalCharInput(wchar_t c) {
             }
 
             uint count;
-            if (commandDigitStack.count == 0) {
+            if (commandDigitCount == 0) {
                 count = 1;
             } else {
-                wchar_t * digits = static_cast<wchar_t *>(MkListGet(&commandDigitStack, 0));
                 count = 0;
-                for (ulong i = 0; i != commandDigitStack.count; i++) {
-                    count += (digits[commandDigitStack.count - 1 - i] - L'0') * PowU(10, i);
+                for (ulong i = 0; i != commandDigitCount; i++) {
+                    count += (commandDigitStack[commandDigitCount - 1 - i] - L'0') * PowU(10, i);
                 }
             }
 
-            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+            MkList2<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
             for (uint i = 0; i != count; i++) {
-                for (ulong j = currentDoc->cursorCharIndex + 1; j <= line->length; j++) {
-                    if (line->chars[j] == c) {
+                for (ulong j = currentDoc->cursorCharIndex + 1; j <= line->count ; j++) {
+                    if (line->elems[j] == c) {
                         currentDoc->cursorCharIndex = j;
                         break;
                     }
@@ -721,20 +703,19 @@ void ProcessNormalCharInput(wchar_t c) {
             }
 
             uint count;
-            if (commandDigitStack.count == 0) {
+            if (commandDigitCount == 0) {
                 count = 1;
             } else {
-                wchar_t * digits = static_cast<wchar_t *>(MkListGet(&commandDigitStack, 0));
                 count = 0;
-                for (ulong i = 0; i != commandDigitStack.count; i++) {
-                    count += (digits[commandDigitStack.count - 1 - i] - L'0') * PowU(10, i);
+                for (ulong i = 0; i != commandDigitCount; i++) {
+                    count += (commandDigitStack[commandDigitCount - 1 - i] - L'0') * PowU(10, i);
                 }
             }
 
-            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
+            MkList2<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
             for (uint i = 0; i != count; i++) {
                 for (ulong j = currentDoc->cursorCharIndex - 1; j != ULONG_MAX; j--) { // intentional overflow
-                    if (line->chars[j] == c) {
+                    if (line->elems[j] == c) {
                         currentDoc->cursorCharIndex = j;
                         break;
                     }
@@ -748,21 +729,14 @@ void ProcessNormalCharInput(wchar_t c) {
         case COMMAND_DELETE:
         {
             if (c == L'd') {
-                if (currentDoc->content.lineCount == 1) {
-                    currentDoc->content.lines[0].length = 0;
+                if (currentDoc->lines.count == 1) {
+                    currentDoc->lines.elems[0].count = 0;
                     currentDoc->cursorCharIndex = 0;
                     currentDoc->lastCursorColIndex = 0;
                 } else {
-                    free(currentDoc->content.lines[currentDoc->cursorLineIndex].chars);
-                    if (currentDoc->cursorLineIndex == currentDoc->content.lineCount - 1) {
-                        currentDoc->cursorLineIndex--;
-                    } else {
-                        ulong shiftEnd = currentDoc->content.lineCount - 1;
-                        for (ulong i = currentDoc->cursorLineIndex; i != shiftEnd; i++) {
-                            currentDoc->content.lines[i] = currentDoc->content.lines[i + 1];
-                        }
-                    }
-                    currentDoc->content.lineCount--;
+                    currentDoc->lines.elems[currentDoc->cursorLineIndex].Clear();
+                    currentDoc->lines.Remove(currentDoc->cursorLineIndex, 1);
+                    currentDoc->cursorLineIndex = min(currentDoc->cursorLineIndex, currentDoc->lines.count - 1);
                     ApplyColIndex(currentDoc, false);
                 }
 
@@ -773,9 +747,8 @@ void ProcessNormalCharInput(wchar_t c) {
         }
     }
 
-    if ((c >= L'1' && c <= L'9') || (c == L'0' && commandDigitStack.count != 0)) {
-        wchar_t * newDigit = static_cast<wchar_t *>(MkListInsert(&commandDigitStack, ULONG_MAX, 1));
-        *newDigit = c;
+    if ((c >= L'1' && c <= L'9') || (c == L'0' && commandDigitCount != 0)) {
+        commandDigitStack[commandDigitCount++] = c;
         SetStatusLineNormal();
         return;
     }
@@ -802,9 +775,9 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'I':
         {
-            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
-            for (currentDoc->cursorCharIndex = 0; currentDoc->cursorCharIndex != line->length; currentDoc->cursorCharIndex++) {
-                if (!iswspace(line->chars[currentDoc->cursorCharIndex])) {
+            MkList2<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
+            for (currentDoc->cursorCharIndex = 0; currentDoc->cursorCharIndex != line->count; currentDoc->cursorCharIndex++) {
+                if (!iswspace(line->elems[currentDoc->cursorCharIndex])) {
                     break;
                 }
             }
@@ -815,7 +788,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'a':
         {
-            if (currentDoc->content.lines[currentDoc->cursorLineIndex].length != 0) {
+            if (currentDoc->lines.elems[currentDoc->cursorLineIndex].count != 0) {
                 currentDoc->cursorCharIndex++;
             }
             currentMode = MODE_INSERT;
@@ -825,7 +798,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'A':
         {
-            currentDoc->cursorCharIndex = currentDoc->content.lines[currentDoc->cursorLineIndex].length;
+            currentDoc->cursorCharIndex = currentDoc->lines.elems[currentDoc->cursorLineIndex].count;
             currentMode = MODE_INSERT;
             SetStatusLineNormal();
             break;
@@ -833,24 +806,10 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'o':
         {
-            if (currentDoc->content.lineCount == currentDoc->content.lineCapacity) {
-                ulong newCapacity = currentDoc->content.lineCapacity + DOCLINES_GROW_COUNT;
-                DocLine * newLines = static_cast<DocLine *>(realloc(currentDoc->content.lines, newCapacity * sizeof(DocLine)));
-                currentDoc->content.lineCapacity = newCapacity;
-                currentDoc->content.lines = newLines;
-            }
-
-            currentDoc->content.lineCount++;
-            currentDoc->cursorLineIndex++;
+            MkList2<wchar_t> * newLine = currentDoc->lines.Insert(++currentDoc->cursorLineIndex, 1);
+            newLine->Init(DOCLINE_INIT_CAPACITY);
+            newLine->SetCapacity(newLine->growCount);
             currentDoc->cursorCharIndex = 0;
-            for (ulong i = currentDoc->content.lineCount - 1; i != currentDoc->cursorLineIndex; i--) {
-                currentDoc->content.lines[i] = currentDoc->content.lines[i - 1];
-            }
-
-            DocLine * newLine = &currentDoc->content.lines[currentDoc->cursorLineIndex];
-            newLine->length = 0;
-            newLine->capacity = DOCLINE_INIT_CAPACITY;
-            newLine->chars = static_cast<wchar_t *>(malloc(newLine->capacity * sizeof(wchar_t)));
 
             currentMode = MODE_INSERT;
             currentDoc->modified = true;
@@ -860,23 +819,10 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'O':
         {
-            if (currentDoc->content.lineCount == currentDoc->content.lineCapacity) {
-                ulong newCapacity = currentDoc->content.lineCapacity + DOCLINES_GROW_COUNT;
-                DocLine * newLines = static_cast<DocLine *>(realloc(currentDoc->content.lines, newCapacity * sizeof(DocLine)));
-                currentDoc->content.lineCapacity = newCapacity;
-                currentDoc->content.lines = newLines;
-            }
-
-            currentDoc->content.lineCount++;
+            MkList2<wchar_t> * newLine = currentDoc->lines.Insert(currentDoc->cursorLineIndex, 1);
+            newLine->Init(DOCLINE_INIT_CAPACITY);
+            newLine->SetCapacity(newLine->growCount);
             currentDoc->cursorCharIndex = 0;
-            for (ulong i = currentDoc->content.lineCount - 1; i != currentDoc->cursorLineIndex; i--) {
-                currentDoc->content.lines[i] = currentDoc->content.lines[i - 1];
-            }
-
-            DocLine * newLine = &currentDoc->content.lines[currentDoc->cursorLineIndex];
-            newLine->length = 0;
-            newLine->capacity = DOCLINE_INIT_CAPACITY;
-            newLine->chars = static_cast<wchar_t *>(malloc(newLine->capacity * sizeof(wchar_t)));
 
             currentMode = MODE_INSERT;
             currentDoc->modified = true;
@@ -886,17 +832,10 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'x':
         {
-            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
-            if (line->length != 0) {
-                if (currentDoc->cursorCharIndex == line->length - 1) {
-                    currentDoc->cursorCharIndex--;
-                } else {
-                    ulong shiftEnd = line->length - 1;
-                    for (ulong i = currentDoc->cursorCharIndex; i != shiftEnd; i++) {
-                        line->chars[i] = line->chars[i + 1];
-                    }
-                }
-                line->length--;
+            MkList2<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
+            if (line->count != 0) {
+                line->Remove(currentDoc->cursorCharIndex, 1);
+                currentDoc->cursorCharIndex = min(currentDoc->cursorCharIndex, line->count - 1);
                 currentDoc->modified = true;
             }
 
@@ -924,7 +863,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'l':
         {
-            ulong length = currentDoc->content.lines[currentDoc->cursorLineIndex].length;
+            ulong length = currentDoc->lines.elems[currentDoc->cursorLineIndex].count;
             if (length != 0 && currentDoc->cursorCharIndex != length - 1) {
                 currentDoc->cursorCharIndex++;
             }
@@ -945,7 +884,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'j':
         {
-            if (currentDoc->cursorLineIndex != currentDoc->content.lineCount - 1) {
+            if (currentDoc->cursorLineIndex != currentDoc->lines.count - 1) {
                 currentDoc->cursorLineIndex++;
                 ApplyColIndex(currentDoc, false);
             }
@@ -963,9 +902,9 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'^':
         {
-            DocLine * line = &currentDoc->content.lines[currentDoc->cursorLineIndex];
-            for (ulong i = 0; i != line->length; i++) {
-                if (!iswspace(line->chars[i])) {
+            MkList2<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
+            for (ulong i = 0; i != line->count; i++) {
+                if (!iswspace(line->elems[i])) {
                     currentDoc->cursorCharIndex = i;
                     break;
                 }
@@ -977,7 +916,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'$':
         {
-            ulong length = currentDoc->content.lines[currentDoc->cursorLineIndex].length;
+            ulong length = currentDoc->lines.elems[currentDoc->cursorLineIndex].count;
             if (length != 0) {
                 currentDoc->cursorCharIndex = length - 1;
             }
@@ -1746,8 +1685,8 @@ static void Paint(Doc * doc) {
     if (doc->cursorLineIndex >= endPaintLineIndex) {
         doc->topPaintLineIndex += doc->cursorLineIndex - endPaintLineIndex + 1;
         endPaintLineIndex = doc->cursorLineIndex + 1;
-    } else if (doc->topPaintLineIndex != 0 && endPaintLineIndex > doc->content.lineCount) {
-        ulong diff = endPaintLineIndex - doc->content.lineCount;
+    } else if (doc->topPaintLineIndex != 0 && endPaintLineIndex > doc->lines.count) {
+        ulong diff = endPaintLineIndex - doc->lines.count;
         if (diff > doc->topPaintLineIndex) {
             doc->topPaintLineIndex = 0;
         } else {
@@ -1755,16 +1694,16 @@ static void Paint(Doc * doc) {
         }
     }
 
-    for (ulong i = doc->topPaintLineIndex; i != doc->content.lineCount; i++) {
+    for (ulong i = doc->topPaintLineIndex; i != doc->lines.count; i++) {
         if (paintRect.bottom - paintRect.top < lineHeight) {
             break;
         }
 
-        DocLine * line = &doc->content.lines[i];
+        MkList2<wchar_t> * line = &doc->lines.elems[i];
         if (i == doc->cursorLineIndex && paintContentCursor) {
-            PaintCursorLine(&paintRect, line->chars, line->length, doc->cursorCharIndex);
+            PaintCursorLine(&paintRect, line->elems, line->count, doc->cursorCharIndex);
         } else {
-            PaintLine(&paintRect, line->chars, line->length);
+            PaintLine(&paintRect, line->elems, line->count);
         }
 
         paintRect.left = 0;
@@ -1910,7 +1849,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 {
                     if (c == 0x1b) { // Esc
                         currentMode = MODE_NORMAL;
-                        if (currentDoc->cursorCharIndex != 0 && currentDoc->cursorCharIndex == currentDoc->content.lines[currentDoc->cursorLineIndex].length) {
+                        if (currentDoc->cursorCharIndex != 0 && currentDoc->cursorCharIndex == currentDoc->lines.elems[currentDoc->cursorLineIndex].count) {
                             currentDoc->cursorCharIndex--;
                         }
                         ResetColIndex(currentDoc);
@@ -1963,7 +1902,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prevInstance, wchar_t * comman
 
     currentDoc = CreateEmptyDoc();
     GetCurrentDirectoryW(MAX_PATH, workingFolderPath);
-    MkListInit(&commandDigitStack, 8, sizeof(wchar_t));
     SetStatusLineNormal();
 
     const wchar_t windowClassName[] = L"MKedit";

@@ -3,6 +3,7 @@
 #include <limits.h>
 #include <stdint.h>
 
+#include "Import/MkList.h"
 #include "Generated/ConfigGen.h"
 
 typedef unsigned int uint;
@@ -25,20 +26,8 @@ enum ResultCode {
 
 extern Config config;
 
-struct DocLine {
-    ulong length;
-    ulong capacity;
-    wchar_t * chars;
-};
-
-struct DocContent {
-    ulong lineCount;
-    ulong lineCapacity;
-    DocLine * lines;
-};
-
 struct Doc {
-    DocContent content;
+    MkList2<MkList2<wchar_t>> lines;
     ulong cursorLineIndex;
     ulong cursorCharIndex;
     ulong lastCursorColIndex;

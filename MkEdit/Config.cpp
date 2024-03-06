@@ -8,6 +8,10 @@ static bool ValidateColor(unsigned long value) {
     return value <= 0xffffff;
 }
 
+static bool ValidateTabWidth(unsigned long value) {
+    return value <= USHRT_MAX;
+}
+
 MKCONFGEN_FILE_BEGIN
 
 MKCONFGEN_DEF_BEGIN(Config)
@@ -19,6 +23,7 @@ MKCONFGEN_ITEM_UINT(tabWidth, 4)
 MKCONFGEN_ITEM_INT(expandTabs, 0)
 
 MKCONFGEN_VALIDATE(fontSize, ValidateFontSize)
+MKCONFGEN_VALIDATE(tabWidth, ValidateTabWidth);
 
 MKCONFGEN_HEADING(Colors)
 MKCONFGEN_ITEM_UINT(textColor, 0xdcdcdc)

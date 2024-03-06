@@ -10,7 +10,7 @@ Doc * CreateEmptyDoc() {
     }
 
     doc->lines.Init(DOCLINES_GROW_COUNT);
-    MkList2<wchar_t> * line = doc->lines.Insert(ULONG_MAX, 1);
+    MkList<wchar_t> * line = doc->lines.Insert(SIZE_MAX, 1);
     if (!line) {
         free(doc);
         return nullptr;
@@ -37,7 +37,7 @@ Doc * CreateEmptyDoc() {
 void DestroyDoc(Doc * doc) {
     if (doc) {
         if (doc->lines.elems) {
-            for (ulong i = 0; i != doc->lines.count; i++) {
+            for (size_t i = 0; i != doc->lines.count; i++) {
                 doc->lines.elems[i].Clear();
             }
             doc->lines.Clear();
@@ -49,7 +49,7 @@ void DestroyDoc(Doc * doc) {
 void ResetColIndex(Doc * doc) {
     wchar_t * chars = doc->lines.elems[doc->cursorLineIndex].elems;
     doc->lastCursorColIndex = 0;
-    for (size_t i = 0; i != doc->cursorCharIndex; i++) {
+    for (ushort i = 0; i != doc->cursorCharIndex; i++) {
         if (chars[i] == L'\t') {
             doc->lastCursorColIndex += config.tabWidth;
         } else {
@@ -62,14 +62,14 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
     switch (c) {
         case L'\t':
         {
-            MkList2<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
+            MkList<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
             if (config.expandTabs) {
                 if (line->count > MAX_LINE_LENGTH - config.tabWidth) {
                     return RESULT_LIMIT_REACHED;
                 }
 
-                ulong newLength = line->count + config.tabWidth;
-                ulong newCapacity = line->capacity;
+                ushort newLength = static_cast<ushort>(line->count + config.tabWidth);
+                ushort newCapacity = static_cast<ushort>(line->capacity);
                 bool grow = false;
                 while (newCapacity < newLength) {
                     newCapacity *= 2;
@@ -80,10 +80,10 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
                 }
 
                 wchar_t * chars = line->Insert(doc->cursorCharIndex, config.tabWidth);
-                for (ulong i = 0; i != config.tabWidth; i++) {
+                for (ushort i = 0; i != config.tabWidth; i++) {
                     chars[i] = L' ';
                 }
-                doc->cursorCharIndex += config.tabWidth;
+                doc->cursorCharIndex += static_cast<ushort>(config.tabWidth);
             } else {
                 if (line->count == MAX_LINE_LENGTH) {
                     return RESULT_LIMIT_REACHED;
@@ -107,15 +107,15 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
                 return RESULT_LIMIT_REACHED;
             }
 
-            MkList2<wchar_t> * newLine = doc->lines.Insert(doc->cursorLineIndex + 1, 1);
+            MkList<wchar_t> * newLine = doc->lines.Insert(doc->cursorLineIndex + 1, 1);
             if (!newLine) {
                 return RESULT_MEMORY_ERROR;
             }
             newLine->Init(DOCLINE_INIT_CAPACITY);
-            MkList2<wchar_t> * curLine = newLine - 1;
+            MkList<wchar_t> * curLine = newLine - 1;
 
-            ulong newLineLength = curLine->count - doc->cursorCharIndex;
-            ulong newLineCapacity = newLine->growCount;
+            ushort newLineLength = static_cast<ushort>(curLine->count) - doc->cursorCharIndex;
+            ushort newLineCapacity = static_cast<ushort>(newLine->growCount);
             while (newLineLength < newLineCapacity) {
                 newLineCapacity *= 2;
             }
@@ -125,7 +125,7 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
             }
             newLine->count = newLineLength;
 
-            for (ulong i = 0; i != newLineLength; i++) {
+            for (ushort i = 0; i != newLineLength; i++) {
                 newLine->elems[i] = curLine->elems[doc->cursorCharIndex + i];
             }
             doc->cursorLineIndex++;
@@ -139,15 +139,15 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
         {
             if (doc->cursorCharIndex == 0) {
                 if (doc->cursorLineIndex != 0) {
-                    MkList2<wchar_t> * curLine = &doc->lines.elems[doc->cursorLineIndex];
-                    MkList2<wchar_t> * prevLine = curLine - 1;
+                    MkList<wchar_t> * curLine = &doc->lines.elems[doc->cursorLineIndex];
+                    MkList<wchar_t> * prevLine = curLine - 1;
 
                     if (curLine->count > MAX_LINE_LENGTH - prevLine->count) {
                         return RESULT_LIMIT_REACHED;
                     }
 
-                    ulong newLength = prevLine->count + curLine->count;
-                    ulong newCapacity = prevLine->capacity;
+                    ushort newLength = static_cast<ushort>(prevLine->count + curLine->count);
+                    ushort newCapacity = static_cast<ushort>(prevLine->capacity);
                     bool grow = false;
                     while (newCapacity < newLength) {
                         newCapacity *= 2;
@@ -158,9 +158,9 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
                     }
 
                     doc->cursorLineIndex--;
-                    doc->cursorCharIndex = prevLine->count;
+                    doc->cursorCharIndex = static_cast<ushort>(prevLine->count);
                     prevLine->count = newLength;
-                    for (ulong i = 0; i != curLine->count; i++) {
+                    for (ushort i = 0; i != curLine->count; i++) {
                         prevLine->elems[doc->cursorCharIndex + i] = curLine->elems[i];
                     }
 
@@ -185,7 +185,7 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
                 return RESULT_OK;
             }
 
-            MkList2<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
+            MkList<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
             if (line->count == MAX_LINE_LENGTH) {
                 return RESULT_LIMIT_REACHED;
             }
@@ -206,9 +206,9 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
 }
 
 void ApplyColIndex(Doc * doc, bool plusOne) {
-    MkList2<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
+    MkList<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
 
-    ulong end = line->count;
+    ushort end = static_cast<ushort>(line->count);
     if (!plusOne && end != 0) {
         end--;
     }

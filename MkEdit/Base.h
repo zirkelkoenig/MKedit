@@ -1,7 +1,6 @@
 #pragma once
 
 #include <limits.h>
-#include <stdint.h>
 
 #include "Import/MkList.h"
 #include "Generated/ConfigGen.h"
@@ -11,7 +10,7 @@ typedef unsigned short ushort;
 typedef unsigned long ulong;
 
 #define MAX_LINE_LENGTH USHRT_MAX
-#define MAX_LINE_COUNT ULONG_MAX
+#define MAX_LINE_COUNT SIZE_MAX
 #define MAX_PATH_COUNT 260
 
 enum ResultCode {
@@ -27,13 +26,13 @@ enum ResultCode {
 extern Config config;
 
 struct Doc {
-    MkList2<MkList2<wchar_t>> lines;
-    ulong cursorLineIndex;
-    ulong cursorCharIndex;
-    ulong lastCursorColIndex;
-    ulong topPaintLineIndex;
-    ulong lastPaintLineCount;
+    MkList<MkList<wchar_t>> lines;
+    size_t cursorLineIndex;
+    ushort cursorCharIndex;
     bool modified;
+    ulong lastCursorColIndex;
+    size_t topPaintLineIndex;
+    size_t lastPaintLineCount;
     uint64_t timestamp;
     wchar_t title[MAX_PATH_COUNT];
 };

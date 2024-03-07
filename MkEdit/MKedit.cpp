@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <wctype.h>
 
-#include "Import/MkList.h"
+#include "Import/MkDynArray.h"
 #include "Import/MkString.h"
 #include "Generated/ConfigGen.h"
 #include "Base.h"
@@ -48,11 +48,11 @@ ResultCode LoadConfigFile(const wchar_t filePath[MAX_PATH_COUNT]) {
         return RESULT_OK;
     }
 
-    MkList<wchar_t> content;
+    MkDynArray<wchar_t> content;
     content.Init(128);
 
     auto writeCallback = [](void * stream, const void * buffer, ulong count, void * status) {
-        MkList<wchar_t> * content = static_cast<MkList<wchar_t> *>(stream);
+        MkDynArray<wchar_t> * content = static_cast<MkDynArray<wchar_t> *>(stream);
         const wchar_t * wcs = static_cast<const wchar_t *>(buffer);
 
         wchar_t * newElems = content->Insert(SIZE_MAX, count);
@@ -250,7 +250,7 @@ ResultCode LoadFile(const wchar_t * path, Doc ** doc) {
                     return false;
                 }
 
-                MkList<wchar_t> * newLine = doc->lines.Insert(SIZE_MAX, 1);
+                MkDynArray<wchar_t> * newLine = doc->lines.Insert(SIZE_MAX, 1);
                 if (!newLine) {
                     *result = RESULT_MEMORY_ERROR;
                     return false;
@@ -261,7 +261,7 @@ ResultCode LoadFile(const wchar_t * path, Doc ** doc) {
                     return false;
                 }
             } else {
-                MkList<wchar_t> * line = &doc->lines.elems[doc->lines.count - 1];
+                MkDynArray<wchar_t> * line = &doc->lines.elems[doc->lines.count - 1];
 
                 if (line->count == MAX_LINE_LENGTH) {
                     *result = RESULT_LIMIT_REACHED;
@@ -354,7 +354,7 @@ void SetStatusLineNormal() {
         cursorLinePercent = 0;
     }
 
-    MkList<wchar_t> * cursorLine = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
+    MkDynArray<wchar_t> * cursorLine = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
 
     ulong cursorColCount = 0;
     for (ushort i = 0; i != currentDoc->cursorCharIndex; i++) {
@@ -475,7 +475,7 @@ void ProcessNormalCharInput(wchar_t c) {
                 }
             }
 
-            MkList<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
+            MkDynArray<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
             for (size_t i = 0; i != count; i++) {
                 for (ushort j = currentDoc->cursorCharIndex + 1; j <= line->count ; j++) {
                     if (line->elems[j] == c) {
@@ -505,7 +505,7 @@ void ProcessNormalCharInput(wchar_t c) {
                 }
             }
 
-            MkList<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
+            MkDynArray<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
             for (size_t i = 0; i != count; i++) {
                 for (ushort j = currentDoc->cursorCharIndex - 1; j != USHRT_MAX; j--) { // intentional overflow
                     if (line->elems[j] == c) {
@@ -568,7 +568,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'I':
         {
-            MkList<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
+            MkDynArray<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
             for (currentDoc->cursorCharIndex = 0; currentDoc->cursorCharIndex != line->count; currentDoc->cursorCharIndex++) {
                 if (!iswspace(line->elems[currentDoc->cursorCharIndex])) {
                     break;
@@ -599,7 +599,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'o':
         {
-            MkList<wchar_t> * newLine = currentDoc->lines.Insert(++currentDoc->cursorLineIndex, 1);
+            MkDynArray<wchar_t> * newLine = currentDoc->lines.Insert(++currentDoc->cursorLineIndex, 1);
             newLine->Init(DOCLINE_INIT_CAPACITY);
             newLine->SetCapacity(newLine->growCount);
             currentDoc->cursorCharIndex = 0;
@@ -612,7 +612,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'O':
         {
-            MkList<wchar_t> * newLine = currentDoc->lines.Insert(currentDoc->cursorLineIndex, 1);
+            MkDynArray<wchar_t> * newLine = currentDoc->lines.Insert(currentDoc->cursorLineIndex, 1);
             newLine->Init(DOCLINE_INIT_CAPACITY);
             newLine->SetCapacity(newLine->growCount);
             currentDoc->cursorCharIndex = 0;
@@ -625,7 +625,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'x':
         {
-            MkList<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
+            MkDynArray<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
             if (line->count != 0) {
                 line->Remove(currentDoc->cursorCharIndex, 1);
                 currentDoc->cursorCharIndex = min(currentDoc->cursorCharIndex, static_cast<ushort>(line->count) - 1);
@@ -695,7 +695,7 @@ void ProcessNormalCharInput(wchar_t c) {
 
         case L'^':
         {
-            MkList<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
+            MkDynArray<wchar_t> * line = &currentDoc->lines.elems[currentDoc->cursorLineIndex];
             for (ushort i = 0; i != line->count; i++) {
                 if (!iswspace(line->elems[i])) {
                     currentDoc->cursorCharIndex = i;
@@ -1495,7 +1495,7 @@ static void Paint(Doc * doc) {
             break;
         }
 
-        MkList<wchar_t> * line = &doc->lines.elems[i];
+        MkDynArray<wchar_t> * line = &doc->lines.elems[i];
         if (i == doc->cursorLineIndex && paintContentCursor) {
             PaintCursorLine(&paintRect, line->elems, static_cast<ushort>(line->count), doc->cursorCharIndex);
         } else {

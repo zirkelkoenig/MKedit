@@ -91,7 +91,7 @@
     <ClInclude Include="Base.h" />
     <ClInclude Include="Generated\ConfigGen.h" />
     <ClInclude Include="Import\MkConfGen.h" />
-    <ClInclude Include="Import\MkList.h" />
+    <ClInclude Include="Import\MkDynArray.h" />
     <ClInclude Include="Import\MkString.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

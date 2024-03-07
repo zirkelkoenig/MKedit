@@ -10,7 +10,7 @@ Doc * CreateEmptyDoc() {
     }
 
     doc->lines.Init(DOCLINES_GROW_COUNT);
-    MkList<wchar_t> * line = doc->lines.Insert(SIZE_MAX, 1);
+    MkDynArray<wchar_t> * line = doc->lines.Insert(SIZE_MAX, 1);
     if (!line) {
         free(doc);
         return nullptr;
@@ -62,7 +62,7 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
     switch (c) {
         case L'\t':
         {
-            MkList<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
+            MkDynArray<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
             if (config.expandTabs) {
                 if (line->count > MAX_LINE_LENGTH - config.tabWidth) {
                     return RESULT_LIMIT_REACHED;
@@ -107,12 +107,12 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
                 return RESULT_LIMIT_REACHED;
             }
 
-            MkList<wchar_t> * newLine = doc->lines.Insert(doc->cursorLineIndex + 1, 1);
+            MkDynArray<wchar_t> * newLine = doc->lines.Insert(doc->cursorLineIndex + 1, 1);
             if (!newLine) {
                 return RESULT_MEMORY_ERROR;
             }
             newLine->Init(DOCLINE_INIT_CAPACITY);
-            MkList<wchar_t> * curLine = newLine - 1;
+            MkDynArray<wchar_t> * curLine = newLine - 1;
 
             ushort newLineLength = static_cast<ushort>(curLine->count) - doc->cursorCharIndex;
             ushort newLineCapacity = static_cast<ushort>(newLine->growCount);
@@ -139,8 +139,8 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
         {
             if (doc->cursorCharIndex == 0) {
                 if (doc->cursorLineIndex != 0) {
-                    MkList<wchar_t> * curLine = &doc->lines.elems[doc->cursorLineIndex];
-                    MkList<wchar_t> * prevLine = curLine - 1;
+                    MkDynArray<wchar_t> * curLine = &doc->lines.elems[doc->cursorLineIndex];
+                    MkDynArray<wchar_t> * prevLine = curLine - 1;
 
                     if (curLine->count > MAX_LINE_LENGTH - prevLine->count) {
                         return RESULT_LIMIT_REACHED;
@@ -185,7 +185,7 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
                 return RESULT_OK;
             }
 
-            MkList<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
+            MkDynArray<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
             if (line->count == MAX_LINE_LENGTH) {
                 return RESULT_LIMIT_REACHED;
             }
@@ -206,7 +206,7 @@ ResultCode ProcessDocCharInput(Doc * doc, wchar_t c) {
 }
 
 void ApplyColIndex(Doc * doc, bool plusOne) {
-    MkList<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
+    MkDynArray<wchar_t> * line = &doc->lines.elems[doc->cursorLineIndex];
 
     ushort end = static_cast<ushort>(line->count);
     if (!plusOne && end != 0) {

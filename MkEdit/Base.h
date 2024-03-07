@@ -2,7 +2,7 @@
 
 #include <limits.h>
 
-#include "Import/MkList.h"
+#include "Import/MkDynArray.h"
 #include "Generated/ConfigGen.h"
 
 typedef unsigned int uint;
@@ -26,7 +26,7 @@ enum ResultCode {
 extern Config config;
 
 struct Doc {
-    MkList<MkList<wchar_t>> lines;
+    MkDynArray<MkDynArray<wchar_t>> lines;
     size_t cursorLineIndex;
     ushort cursorCharIndex;
     bool modified;
